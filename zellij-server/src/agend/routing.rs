@@ -65,4 +65,12 @@ impl RoutingEngine {
     pub fn instance_for_thread(&self, thread_id: &str) -> Option<&str> {
         self.table.get(thread_id).map(|t| t.name.as_str())
     }
+
+    /// Get the general/dispatcher instance (if any).
+    pub fn general_instance(&self) -> Option<&str> {
+        self.table
+            .values()
+            .find(|t| t.kind == RouteKind::General)
+            .map(|t| t.name.as_str())
+    }
 }

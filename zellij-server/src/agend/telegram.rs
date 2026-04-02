@@ -318,12 +318,21 @@ fn process_message(
         .unwrap_or("")
         .to_owned();
 
-    let target = thread_id.as_deref().and_then(|tid| {
-        routing
-            .read()
-            .ok()
-            .and_then(|r| r.instance_for_thread(tid).map(|s| s.to_owned()))
-    });
+    // Route: try exact thread_id first, then fall back to General topic ("1")
+    // Telegram's General topic sometimes has no message_thread_id field
+    let target = thread_id
+        .as_deref()
+        .and_then(|tid| {
+            routing.read().ok().and_then(|r| r.instance_for_thread(tid).map(|s| s.to_owned()))
+        })
+        .or_else(|| {
+            // No thread_id or no match — try General topic and "1" as fallback
+            routing.read().ok().and_then(|r| {
+                r.instance_for_thread("1")
+                    .or_else(|| r.general_instance())
+                    .map(|s| s.to_owned())
+            })
+        });
 
     let reply_to_text = msg["reply_to_message"]["text"]
         .as_str()
