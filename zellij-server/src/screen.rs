@@ -5067,15 +5067,56 @@ pub(crate) fn screen_thread_main(
                     }
                 }
 
-                // AgEnD hook: drain monitor actions (dialog dismissal writes)
+                // AgEnD hook: drain monitor + daemon actions
                 #[cfg(feature = "agend")]
                 {
                     let senders = screen.bus.senders.clone();
-                    crate::agend::drain_actions(|tid, bytes| {
-                        let _ = senders.send_to_pty_writer(
-                            crate::pty_writer::PtyWriteInstruction::Write(bytes, tid, None),
-                        );
-                    });
+                    let senders2 = senders.clone();
+                    crate::agend::drain_actions(
+                        |tid, bytes| {
+                            let _ = senders.send_to_pty_writer(
+                                crate::pty_writer::PtyWriteInstruction::Write(bytes, tid, None),
+                            );
+                        },
+                        |action| {
+                            use crate::agend::DaemonAction;
+                            match action {
+                                DaemonAction::NewTab { name, command, args, cwd } => {
+                                    use zellij_utils::input::command::RunCommand;
+                                    let run_cmd = RunCommand {
+                                        command: std::path::PathBuf::from(&command),
+                                        args,
+                                        cwd: Some(cwd),
+                                        ..Default::default()
+                                    };
+                                    let terminal_action = Some(
+                                        zellij_utils::input::command::TerminalAction::RunCommand(run_cmd),
+                                    );
+                                    let _ = senders2.send_to_screen(
+                                        ScreenInstruction::NewTab(
+                                            None,               // cwd
+                                            terminal_action,    // shell/command
+                                            None,               // tiled layout
+                                            vec![],             // floating panes
+                                            Some(name.clone()), // tab name
+                                            (vec![], vec![]),   // swap layouts
+                                            None,               // initial_panes
+                                            false,              // block_on_first_terminal
+                                            true,               // should_change_focus
+                                            (1, false),         // (client_id, is_web_client)
+                                            None,               // completion signal
+                                        ),
+                                    );
+                                    log::info!("agend: created new tab '{name}' running '{command}'");
+                                },
+                                DaemonAction::CloseTab(name) => {
+                                    log::info!("agend: close tab '{name}' requested (not yet implemented)");
+                                    // TODO: find tab by name and close it
+                                },
+                                DaemonAction::Write(_, _) => {}, // handled above
+                            }
+                        },
+                    );
                 }
 
                 let _ = screen

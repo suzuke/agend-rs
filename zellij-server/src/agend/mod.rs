@@ -25,10 +25,19 @@ use std::sync::RwLock;
 
 // ── Daemon output channel (daemon thread → screen thread → pty_writer) ──
 
-/// Actions the daemon wants to perform on panes.
+/// Actions the daemon wants to perform on panes/tabs.
 pub enum DaemonAction {
     /// Write bytes to a terminal pane (terminal_id, bytes).
     Write(u32, Vec<u8>),
+    /// Create a new tab with a command (tab_name, command, args, cwd).
+    NewTab {
+        name: String,
+        command: String,
+        args: Vec<String>,
+        cwd: std::path::PathBuf,
+    },
+    /// Close a tab by name.
+    CloseTab(String),
 }
 
 static DAEMON_CHANNEL: Lazy<(Sender<DaemonAction>, Receiver<DaemonAction>)> =
@@ -185,9 +194,13 @@ pub fn start_monitor() {
 
 /// Drain pending actions (from both monitor and daemon) and write them to terminals.
 /// Called from the screen event loop.
-pub fn drain_actions<F>(mut write_fn: F)
+///
+/// `write_fn`: writes bytes to a terminal's PTY stdin.
+/// `tab_fn`: creates/closes tabs (receives DaemonAction::NewTab or CloseTab).
+pub fn drain_actions<W, T>(mut write_fn: W, mut tab_fn: T)
 where
-    F: FnMut(u32, Vec<u8>),
+    W: FnMut(u32, Vec<u8>),
+    T: FnMut(DaemonAction),
 {
     // Drain monitor actions (dialog dismissal, etc.)
     while let Some(action) = monitor::recv_action() {
@@ -195,10 +208,11 @@ where
             MonitorAction::Write(tid, bytes) => write_fn(tid, bytes),
         }
     }
-    // Drain daemon actions (message injection from Telegram/cross-instance)
+    // Drain daemon actions (message injection + tab operations)
     while let Some(action) = recv_daemon_action() {
         match action {
             DaemonAction::Write(tid, bytes) => write_fn(tid, bytes),
+            other => tab_fn(other),
         }
     }
 }

@@ -147,6 +147,17 @@ fn parse_command(cmd: &str) -> (String, Vec<String>) {
     (binary, args)
 }
 
+/// Get a simple command + args for a backend (no config writing).
+pub fn simple_command(backend: &str) -> (String, Vec<String>) {
+    match backend {
+        "claude-code" => ("claude".into(), vec![]),
+        "codex" => ("codex".into(), vec![]),
+        "gemini-cli" => ("gemini".into(), vec!["--yolo".into()]),
+        "opencode" => ("opencode".into(), vec![]),
+        other => (other.into(), vec![]),
+    }
+}
+
 /// Read saved session ID for resume support.
 fn read_session_id(instance_dir: &PathBuf) -> Option<String> {
     let path = instance_dir.join("session-id");

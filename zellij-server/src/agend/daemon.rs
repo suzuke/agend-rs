@@ -295,6 +295,22 @@ impl Daemon {
                 }
             },
 
+            // ── Instance management ──────────────────────────────────────
+            "start_instance" | "create_instance" => {
+                self.handle_create_or_start_instance(instance_name, args)
+            },
+            "delete_instance" => {
+                let name = args["name"].as_str().unwrap_or("");
+                log::info!("agend daemon: delete_instance '{name}' requested");
+                super::send_daemon_action(super::DaemonAction::CloseTab(name.to_owned()));
+                Ok(json!({"deleted": true, "name": name}))
+            },
+
+            // ── Repo checkout (stub) ────────────────────────────────────
+            "checkout_repo" | "release_repo" => {
+                Err(format!("tool '{tool}' not yet implemented in agend-rs"))
+            },
+
             // ── Unknown ─────────────────────────────────────────────────
             _ => Err(format!("unknown tool: {tool}")),
         }
@@ -412,6 +428,101 @@ impl Daemon {
                 "skip_permissions": ic.skip_permissions,
             })),
             None => Err(format!("instance not found: {name}")),
+        }
+    }
+
+    fn handle_create_or_start_instance(
+        &self,
+        _caller: &str,
+        args: &Value,
+    ) -> Result<Value, String> {
+        let directory = args
+            .get("directory")
+            .or_else(|| args.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if directory.is_empty() {
+            return Err("directory or name is required".into());
+        }
+
+        // For start_instance, look up existing config
+        if let Some(ic) = self.config.instances.get(directory) {
+            let backend = ic.backend_or(&self.config.defaults);
+            let instance_dir = {
+                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+                PathBuf::from(&home).join(".agend/instances").join(directory)
+            };
+            let socket_path = instance_dir.join("channel.sock");
+
+            let zellij_binary = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "zellij".into());
+
+            let bcfg = super::backend::BackendConfig {
+                instance_name: directory,
+                instance_dir: &instance_dir,
+                working_directory: &ic.working_directory,
+                mcp_server_binary: &zellij_binary,
+                socket_path: &socket_path,
+                system_prompt: None,
+                skip_permissions: ic.skip_permissions,
+                model: ic.model.as_deref().or(self.config.defaults.model.as_deref()),
+                tool_set: "full",
+                session_id: super::health::read_session_id(directory),
+            };
+
+            match super::backend::write_config(backend, &bcfg) {
+                Ok(spawn) => {
+                    let (cmd_binary, cmd_args) = {
+                        let parts: Vec<&str> = spawn.command.split_whitespace().collect();
+                        if parts.is_empty() {
+                            return Err("empty command".into());
+                        }
+                        (
+                            parts[0].to_owned(),
+                            parts[1..].iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                        )
+                    };
+
+                    super::send_daemon_action(super::DaemonAction::NewTab {
+                        name: directory.to_owned(),
+                        command: cmd_binary,
+                        args: cmd_args,
+                        cwd: ic.working_directory.clone(),
+                    });
+
+                    log::info!("agend daemon: starting instance '{directory}'");
+                    Ok(json!({"started": true, "name": directory}))
+                },
+                Err(e) => Err(format!("failed to write config: {e}")),
+            }
+        } else {
+            // create_instance: new instance not in fleet.yaml
+            let dir = args["directory"].as_str().unwrap_or(directory);
+            let backend = args["backend"]
+                .as_str()
+                .unwrap_or(&self.config.defaults.backend);
+            let name = args["topic_name"]
+                .as_str()
+                .or_else(|| {
+                    std::path::Path::new(dir)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                })
+                .unwrap_or("new-instance");
+
+            // Create a simple tab with the backend command
+            let (cmd, cmd_args) = super::fleet::simple_command(backend);
+            super::send_daemon_action(super::DaemonAction::NewTab {
+                name: name.to_owned(),
+                command: cmd,
+                args: cmd_args,
+                cwd: PathBuf::from(dir),
+            });
+
+            log::info!("agend daemon: creating instance '{name}' at {dir}");
+            Ok(json!({"created": true, "name": name, "directory": dir}))
         }
     }
 
