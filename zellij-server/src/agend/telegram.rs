@@ -31,6 +31,8 @@ pub struct InboundMessage {
     pub timestamp: i64,
     pub reply_to_text: Option<String>,
     pub target_instance: Option<String>,
+    /// Telegram file_id if message has an attachment (photo, document, etc.)
+    pub attachment_file_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -172,6 +174,33 @@ impl BotApi {
         }))
     }
 
+    fn get_file(&self, file_id: &str) -> Result<String, String> {
+        let result = self.call("getFile", &json!({"file_id": file_id}))?;
+        result["file_path"]
+            .as_str()
+            .map(|s| s.to_owned())
+            .ok_or_else(|| "no file_path in response".into())
+    }
+
+    fn download_file(&self, file_path: &str, local_path: &std::path::Path) -> Result<(), String> {
+        let url = format!("https://api.telegram.org/file/bot{}/{}", self.token, file_path);
+        let mut response = isahc::get(&url).map_err(|e| format!("download: {e}"))?;
+        let bytes = response.bytes().map_err(|e| format!("read: {e}"))?;
+        std::fs::write(local_path, &bytes).map_err(|e| format!("write: {e}"))?;
+        Ok(())
+    }
+
+    /// Download a Telegram file by file_id to local inbox directory.
+    fn download_attachment(&self, file_id: &str) -> Result<String, String> {
+        let tg_path = self.get_file(file_id)?;
+        let filename = tg_path.rsplit('/').next().unwrap_or("attachment");
+        let inbox = super::paths::agend_home().join("inbox");
+        std::fs::create_dir_all(&inbox).map_err(|e| format!("mkdir: {e}"))?;
+        let local_path = inbox.join(format!("{}_{}", chrono::Utc::now().timestamp(), filename));
+        self.download_file(&tg_path, &local_path)?;
+        Ok(local_path.to_string_lossy().into_owned())
+    }
+
     fn get_updates(&self, offset: i64) -> Result<Vec<Value>, String> {
         let result = self.call("getUpdates", &json!({
             "offset": offset,
@@ -297,8 +326,10 @@ fn process_message(
         return;
     }
 
-    let text = msg["text"].as_str().unwrap_or("").to_owned();
-    if text.is_empty() {
+    // Extract text and/or attachment
+    let text = msg["text"].as_str().or(msg["caption"].as_str()).unwrap_or("").to_owned();
+    let attachment_file_id = extract_file_id(msg);
+    if text.is_empty() && attachment_file_id.is_none() {
         return;
     }
 
@@ -338,9 +369,31 @@ fn process_message(
         timestamp: msg["date"].as_i64().unwrap_or(0),
         reply_to_text,
         target_instance: target,
+        attachment_file_id,
     };
 
     let _ = inbound_tx.try_send(inbound);
+}
+
+/// Extract the best file_id from a Telegram message (photo, document, audio, etc.)
+fn extract_file_id(msg: &Value) -> Option<String> {
+    // Photo: array of sizes, take the largest (last)
+    if let Some(photos) = msg["photo"].as_array() {
+        if let Some(last) = photos.last() {
+            return last["file_id"].as_str().map(|s| s.to_owned());
+        }
+    }
+    // Document
+    if let Some(fid) = msg["document"]["file_id"].as_str() {
+        return Some(fid.to_owned());
+    }
+    // Audio / Voice / Video
+    for key in &["audio", "voice", "video", "video_note", "sticker"] {
+        if let Some(fid) = msg[key]["file_id"].as_str() {
+            return Some(fid.to_owned());
+        }
+    }
+    None
 }
 
 fn handle_outbound(bot: &BotApi, action: OutboundAction) {

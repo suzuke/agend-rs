@@ -10,6 +10,7 @@ use super::ipc::{IpcRequest, IpcResponse, IpcServer};
 use super::routing::RoutingEngine;
 use super::telegram::{OutboundAction, TelegramAdapter, TelegramSender};
 use crossbeam::channel::Receiver;
+use isahc::ReadResponseExt;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -151,9 +152,10 @@ impl Daemon {
     ) -> Result<Value, String> {
         match tool {
             // ── Channel tools → Telegram ────────────────────────────────
-            "reply" | "react" | "edit_message" | "download_attachment" => {
+            "reply" | "react" | "edit_message" => {
                 self.route_to_telegram(tool, args)
             },
+            "download_attachment" => self.handle_download_attachment(args),
 
             // ── Cross-instance tools ────────────────────────────────────
             "send_to_instance" => self.handle_send_to_instance(instance_name, args),
@@ -744,6 +746,52 @@ impl Daemon {
         }
     }
 
+    fn handle_download_attachment(&self, args: &Value) -> Result<Value, String> {
+        let file_id = args["file_id"].as_str().unwrap_or("");
+        if file_id.is_empty() {
+            return Err("file_id is required".into());
+        }
+
+        // Get bot token from config
+        let bot_token_env = self.config.channel.as_ref()
+            .and_then(|c| c.bot_token_env.as_deref())
+            .unwrap_or("AGEND_BOT_TOKEN");
+        let bot_token = std::env::var(bot_token_env)
+            .map_err(|_| format!("bot token not set (env: {bot_token_env})"))?;
+
+        // Use Telegram Bot API to download
+        let base_url = format!("https://api.telegram.org/bot{}", bot_token);
+
+        // Step 1: getFile to get file_path
+        let get_file_url = format!("{}/getFile", base_url);
+        let get_file_body = serde_json::to_string(&json!({"file_id": file_id}))
+            .map_err(|e| format!("json: {e}"))?;
+        let req = isahc::Request::post(&get_file_url)
+            .header("Content-Type", "application/json")
+            .body(get_file_body)
+            .map_err(|e| format!("build: {e}"))?;
+        let mut resp = isahc::send(req).map_err(|e| format!("send: {e}"))?;
+        let resp_text = resp.text().map_err(|e| format!("read: {e}"))?;
+        let parsed: Value = serde_json::from_str(&resp_text).map_err(|e| format!("parse: {e}"))?;
+        let tg_file_path = parsed["result"]["file_path"]
+            .as_str()
+            .ok_or("no file_path in Telegram response")?;
+
+        // Step 2: download file
+        let filename = tg_file_path.rsplit('/').next().unwrap_or("attachment");
+        let inbox = super::paths::agend_home().join("inbox");
+        std::fs::create_dir_all(&inbox).map_err(|e| format!("mkdir: {e}"))?;
+        let local_path = inbox.join(format!("{}_{}", chrono::Utc::now().timestamp(), filename));
+
+        let download_url = format!("https://api.telegram.org/file/bot{}/{}", bot_token, tg_file_path);
+        let mut dl_resp = isahc::get(&download_url).map_err(|e| format!("download: {e}"))?;
+        let bytes = dl_resp.bytes().map_err(|e| format!("read file: {e}"))?;
+        std::fs::write(&local_path, &bytes).map_err(|e| format!("write: {e}"))?;
+
+        log::info!("agend daemon: downloaded attachment {} → {}", file_id, local_path.display());
+        Ok(json!(local_path.to_string_lossy()))
+    }
+
     fn route_to_telegram(&self, tool: &str, args: &Value) -> Result<Value, String> {
         let telegram = self.telegram.as_ref().ok_or("Telegram not configured")?;
         let action = match tool {
@@ -776,9 +824,12 @@ impl Daemon {
     fn handle_telegram_inbound(&self, msg: super::telegram::InboundMessage) {
         if let Some(ref target) = msg.target_instance {
             let thread_id = msg.thread_id.as_deref().unwrap_or("");
+            let attachment_info = msg.attachment_file_id.as_ref()
+                .map(|fid| format!(" attachment_file_id:{}", fid))
+                .unwrap_or_default();
             let formatted = format!(
-                "[user:{} chat_id:{} thread_id:{}] {}\n(Reply using the reply tool with chat_id=\"{}\")\n",
-                msg.username, msg.chat_id, thread_id, msg.text, msg.chat_id
+                "[user:{} chat_id:{} thread_id:{}{}] {}\n(Reply using the reply tool with chat_id=\"{}\")\n",
+                msg.username, msg.chat_id, thread_id, attachment_info, msg.text, msg.chat_id
             );
             inject_message_to_instance(target, &formatted);
             log::info!(
