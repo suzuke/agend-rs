@@ -122,8 +122,7 @@ pub fn generate_layout_from_config(config_dir: Option<&str>) -> Result<String, S
     // Generate layout (this also writes backend configs via backend::write_config)
     let layout = FleetManager::generate_layout(&config, &zellij_binary);
     // Debug: write layout to file so we can inspect it
-    debug_log(&format!("layout generated ({} bytes):\n{}", layout.len(), &layout));
-    eprintln!("agend: generated layout ({} bytes)", layout.len());
+    log::info!("agend: generated layout ({} bytes) for {} instances", layout.len(), config.instances.len());
     Ok(layout)
 }
 

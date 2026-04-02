@@ -54,7 +54,7 @@ impl Daemon {
         // Start Telegram adapter if configured
         // Start Telegram adapter if configured (uses plain HTTP, no tokio)
         let telegram = TelegramAdapter::from_config(&config).map(|adapter| {
-            super::debug_log("daemon: starting Telegram adapter (HTTP polling)");
+            log::info!("agend daemon: starting Telegram adapter");
             adapter.run()
         });
 
@@ -74,7 +74,7 @@ impl Daemon {
             self.ipc_receivers.len()
         );
 
-        super::debug_log(&format!("daemon: run() starting select loop with {} IPC receivers", self.ipc_receivers.len()));
+        log::info!("agend daemon: select loop with {} IPC receivers", self.ipc_receivers.len());
 
         // Merge all IPC receivers into a single select loop
         let mut sel = crossbeam::channel::Select::new();
@@ -92,7 +92,6 @@ impl Daemon {
             sel.recv(rx);
         }
 
-        super::debug_log("daemon: entering select loop");
         loop {
             let oper = sel.select();
             let index = oper.index();

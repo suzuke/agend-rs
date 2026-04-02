@@ -232,27 +232,17 @@ impl TelegramAdapter {
         std::thread::Builder::new()
             .name("agend_tg_poll".into())
             .spawn(move || {
-                super::debug_log("telegram: polling thread started");
+                log::info!("agend telegram: polling thread started");
                 let mut offset: i64 = 0;
 
                 loop {
                     match bot.get_updates(offset) {
                         Ok(updates) => {
-                            if !updates.is_empty() {
-                                super::debug_log(&format!("telegram: got {} updates", updates.len()));
-                            }
                             for update in updates {
                                 if let Some(uid) = update["update_id"].as_i64() {
                                     offset = uid + 1;
                                 }
                                 if let Some(msg) = update.get("message") {
-                                    let chat = msg["chat"]["id"].as_i64().unwrap_or(0);
-                                    let text = msg["text"].as_str().unwrap_or("");
-                                    let tid = msg["message_thread_id"].as_i64();
-                                    super::debug_log(&format!(
-                                        "telegram: msg chat={} thread={:?} text={:?} (want group={})",
-                                        chat, tid, &text[..text.len().min(50)], group_id
-                                    ));
                                     process_message(msg, group_id, &allowed_users, &routing, &inbound_tx);
                                 }
                             }
