@@ -597,6 +597,7 @@ impl Daemon {
                 Ok(spawn) => {
                     let parts: Vec<&str> = spawn.command.split_whitespace().collect();
                     if !parts.is_empty() {
+                        super::debug_log(&format!("daemon: sending NewTab action: name={} cmd={}", name, parts[0]));
                         super::send_daemon_action(super::DaemonAction::NewTab {
                             name: name.to_owned(),
                             command: parts[0].to_owned(),

@@ -5081,6 +5081,7 @@ pub(crate) fn screen_thread_main(
                             use crate::agend::DaemonAction;
                             match action {
                                 DaemonAction::NewTab { name, command, args, cwd } => {
+                                    crate::agend::debug_log(&format!("screen: NewTab drained! name={} cmd={}", name, command));
                                     use zellij_utils::input::command::RunCommand;
                                     let run_cmd = RunCommand {
                                         command: std::path::PathBuf::from(&command),
