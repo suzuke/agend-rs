@@ -305,10 +305,9 @@ impl Daemon {
                 Ok(json!({"deleted": true, "name": name}))
             },
 
-            // ── Repo checkout (stub) ────────────────────────────────────
-            "checkout_repo" | "release_repo" => {
-                Err(format!("tool '{tool}' not yet implemented in agend-rs"))
-            },
+            // ── Repo checkout ────────────────────────────────────────────
+            "checkout_repo" => self.handle_checkout_repo(args),
+            "release_repo" => self.handle_release_repo(args),
 
             // ── Unknown ─────────────────────────────────────────────────
             _ => Err(format!("unknown tool: {tool}")),
@@ -541,6 +540,87 @@ impl Daemon {
             log::info!("agend daemon: creating instance '{name}' at {dir}");
             Ok(json!({"created": true, "name": name, "directory": dir}))
         }
+    }
+
+    fn handle_checkout_repo(&self, args: &Value) -> Result<Value, String> {
+        let source = args["source"].as_str().unwrap_or("");
+        let branch = args["branch"].as_str().unwrap_or("HEAD");
+
+        if source.is_empty() {
+            return Err("source is required".into());
+        }
+
+        // Resolve source: could be instance name or absolute path
+        let repo_path = if let Some(ic) = self.config.instances.get(source) {
+            ic.working_directory.clone()
+        } else {
+            let expanded = if source.starts_with('~') {
+                let home = std::env::var("HOME").unwrap_or_default();
+                PathBuf::from(source.replacen('~', &home, 1))
+            } else {
+                PathBuf::from(source)
+            };
+            if !expanded.exists() {
+                return Err(format!("path not found: {source}"));
+            }
+            expanded
+        };
+
+        // Create a git worktree for read-only access
+        let worktree_base = super::paths::agend_home().join("worktrees");
+        std::fs::create_dir_all(&worktree_base).map_err(|e| format!("mkdir: {e}"))?;
+
+        let worktree_name = format!(
+            "{}-{}",
+            repo_path.file_name().and_then(|f| f.to_str()).unwrap_or("repo"),
+            &uuid::Uuid::new_v4().to_string()[..8]
+        );
+        let worktree_path = worktree_base.join(&worktree_name);
+
+        let output = std::process::Command::new("git")
+            .args(["worktree", "add", "--detach", &worktree_path.to_string_lossy(), branch])
+            .current_dir(&repo_path)
+            .output()
+            .map_err(|e| format!("git worktree add: {e}"))?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(format!("git worktree add failed: {stderr}"));
+        }
+
+        log::info!("agend daemon: checked out {} ({}) → {}", source, branch, worktree_path.display());
+        Ok(json!({
+            "path": worktree_path.to_string_lossy(),
+            "source": source,
+            "branch": branch,
+        }))
+    }
+
+    fn handle_release_repo(&self, args: &Value) -> Result<Value, String> {
+        let path = args["path"].as_str().unwrap_or("");
+        if path.is_empty() {
+            return Err("path is required".into());
+        }
+
+        // Verify the path is under our worktrees directory
+        let worktree_base = super::paths::agend_home().join("worktrees");
+        let path = PathBuf::from(path);
+        if !path.starts_with(&worktree_base) {
+            return Err("path is not a managed worktree".into());
+        }
+
+        let output = std::process::Command::new("git")
+            .args(["worktree", "remove", "--force", &path.to_string_lossy()])
+            .output()
+            .map_err(|e| format!("git worktree remove: {e}"))?;
+
+        if !output.status.success() {
+            // Fallback: just remove the directory
+            let _ = std::fs::remove_dir_all(&path);
+        }
+
+        log::info!("agend daemon: released worktree {}", path.display());
+        Ok(json!({"released": true, "path": path.to_string_lossy()}))
     }
 
     fn handle_task(&self, instance_name: &str, args: &Value) -> Result<Value, String> {
