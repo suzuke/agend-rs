@@ -24,6 +24,19 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
+/// Debug log to file (since the server daemonizes and stdout is lost).
+#[allow(dead_code)]
+pub fn debug_log(msg: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("/tmp/agend-debug.log")
+    {
+        let _ = writeln!(f, "[{}] {}", chrono::Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
+}
+
 // ── Daemon output channel (daemon thread → screen thread → pty_writer) ──
 
 /// Actions the daemon wants to perform on panes/tabs.
@@ -65,14 +78,10 @@ static TERMINAL_REGISTRY: Lazy<RwLock<HashMap<String, u32>>> =
 /// Updates BOTH the global registry (for daemon) AND notifies the monitor
 /// (for dialog detection and ready pattern matching).
 pub fn register_terminal(instance_name: &str, terminal_id: u32) {
-    // Notify monitor so it can track this terminal for dialog/ready detection
+    debug_log(&format!("register_terminal: {} → tid {}", instance_name, terminal_id));
     monitor::send_pty_event(PtyEvent::Register(terminal_id, instance_name.to_owned()));
 
     if let Ok(mut reg) = TERMINAL_REGISTRY.write() {
-        log::info!(
-            "agend registry: {} → terminal {}",
-            instance_name, terminal_id
-        );
         reg.insert(instance_name.to_owned(), terminal_id);
     }
 }
@@ -140,6 +149,8 @@ pub fn on_new_pane(pid: PaneId, pane_name: Option<&str>) {
 /// Start the agend monitor thread AND the daemon (IPC servers + tool routing).
 /// Called during server session init (hook #3).
 pub fn start_monitor() {
+    debug_log("start_monitor() called — starting PTY monitor + daemon + health");
+
     // Start PTY monitor thread
     std::thread::Builder::new()
         .name("agend_monitor".into())

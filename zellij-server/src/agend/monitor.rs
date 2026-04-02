@@ -206,21 +206,25 @@ impl Monitor {
         let mut actions = Vec::new();
         match event {
             PtyEvent::Register(tid, pane_name) => {
-                // Auto-register if pane name matches an instance from fleet config
+                super::debug_log(&format!("monitor: PtyEvent::Register tid={} name={} backends={:?}", tid, pane_name, self.instance_backends.keys().collect::<Vec<_>>()));
                 if let Some(backend) = self.instance_backends.get(&pane_name).cloned() {
                     self.register(tid, pane_name, backend);
                 } else {
-                    log::debug!(
-                        "agend monitor: pane '{}' (tid={}) not in fleet config, ignoring",
-                        pane_name, tid
-                    );
+                    super::debug_log(&format!("monitor: pane '{}' NOT in fleet config", pane_name));
                 }
                 return actions;
             },
             PtyEvent::Bytes(tid, bytes) => {
+                if self.terminals.is_empty() {
+                    // Log once to show we're getting bytes but no terminals registered
+                    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        super::debug_log(&format!("monitor: receiving Bytes(tid={}) but NO terminals registered!", tid));
+                    }
+                }
                 if let Some(state) = self.terminals.get_mut(&tid) {
                     if state.ready {
-                        return actions; // already ready, skip processing
+                        return actions;
                     }
                     state.append(&bytes);
                     let text = state.text();
@@ -228,10 +232,8 @@ impl Monitor {
                     // 1. Check for dialog BEFORE ready (dialog can look like ready)
                     if DIALOG_PATTERN.is_match(&text) && state.dialog_attempts < 5 {
                         state.dialog_attempts += 1;
-                        log::info!(
-                            "agend monitor: dialog detected for '{}' (attempt {})",
-                            state.instance_name, state.dialog_attempts
-                        );
+                        super::debug_log(&format!("DIALOG DETECTED for '{}' (attempt {}), text: {}",
+                            state.instance_name, state.dialog_attempts, &text[..text.len().min(200)]));
 
                         if DIALOG_NO_SELECTED.is_match(&text) {
                             // Navigate down to "Yes" option, then Enter
