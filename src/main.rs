@@ -23,7 +23,21 @@ fn main() {
     if let Some(Command::Agend) = &opts.command {
         #[cfg(feature = "agend")]
         {
-            zellij_server::agend::run();
+            // Load fleet.yaml → generate layout → start Zellij with that layout
+            match zellij_server::agend::generate_layout_from_config(None) {
+                Ok(layout) => {
+                    let mut opts = opts.clone();
+                    opts.command = None;
+                    opts.layout_string = Some(layout);
+                    // Set env var so server-side hooks know to enable monitoring
+                    std::env::set_var("AGEND_MODE", "1");
+                    commands::start_client(opts);
+                },
+                Err(e) => {
+                    eprintln!("agend: {e}");
+                    std::process::exit(1);
+                },
+            }
             std::process::exit(0);
         }
         #[cfg(not(feature = "agend"))]

@@ -5054,6 +5054,10 @@ pub(crate) fn screen_thread_main(
 
         match event {
             ScreenInstruction::PtyBytes(pid, vte_bytes) => {
+                // AgEnD hook: forward PTY bytes to the agend monitor
+                #[cfg(feature = "agend")]
+                crate::agend::on_pty_bytes(pid, &vte_bytes);
+
                 let all_tabs = screen.get_tabs_mut();
                 for tab in all_tabs.values_mut() {
                     if tab.has_terminal_pid(pid) {
