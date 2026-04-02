@@ -624,6 +624,14 @@ impl<'a> LayoutApplier<'a> {
             Some(Run::Command(run_command)) => Some(run_command.to_string()),
             _ => None,
         };
+        // AgEnD hook: register floating pane name → terminal_id mapping
+        #[cfg(feature = "agend")]
+        if let Some(ref name) = floating_pane_layout.name {
+            if !name.is_empty() {
+                crate::agend::register_terminal(name, *pid);
+            }
+        }
+
         let mut new_pane = TerminalPane::new(
             *pid,
             position_and_size,
@@ -699,6 +707,14 @@ impl<'a> LayoutApplier<'a> {
         } else {
             None
         };
+
+        // AgEnD hook: register layout pane name → terminal_id mapping
+        #[cfg(feature = "agend")]
+        if let Some(ref name) = layout.name {
+            if !name.is_empty() {
+                crate::agend::register_terminal(name, pid);
+            }
+        }
 
         let mut new_pane = TerminalPane::new(
             pid,
