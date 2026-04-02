@@ -238,11 +238,21 @@ impl TelegramAdapter {
                 loop {
                     match bot.get_updates(offset) {
                         Ok(updates) => {
+                            if !updates.is_empty() {
+                                super::debug_log(&format!("telegram: got {} updates", updates.len()));
+                            }
                             for update in updates {
                                 if let Some(uid) = update["update_id"].as_i64() {
                                     offset = uid + 1;
                                 }
                                 if let Some(msg) = update.get("message") {
+                                    let chat = msg["chat"]["id"].as_i64().unwrap_or(0);
+                                    let text = msg["text"].as_str().unwrap_or("");
+                                    let tid = msg["message_thread_id"].as_i64();
+                                    super::debug_log(&format!(
+                                        "telegram: msg chat={} thread={:?} text={:?} (want group={})",
+                                        chat, tid, &text[..text.len().min(50)], group_id
+                                    ));
                                     process_message(msg, group_id, &allowed_users, &routing, &inbound_tx);
                                 }
                             }
