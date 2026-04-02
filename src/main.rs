@@ -47,6 +47,20 @@ fn main() {
         }
     }
 
+    // AgEnD MCP server: JSON-RPC over stdio (launched by CLI agents)
+    if let Some(Command::AgendMcpServer) = &opts.command {
+        #[cfg(feature = "agend")]
+        {
+            zellij_server::agend::mcp::run_stdio_server();
+            std::process::exit(0);
+        }
+        #[cfg(not(feature = "agend"))]
+        {
+            eprintln!("error: agend feature is not enabled");
+            std::process::exit(1);
+        }
+    }
+
     {
         let config = Config::try_from(&opts).ok();
         if let Some(Command::Action(cli_action)) = opts.command {

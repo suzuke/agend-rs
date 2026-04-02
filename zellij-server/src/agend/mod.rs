@@ -25,6 +25,14 @@ pub fn generate_layout_from_config(config_dir: Option<&str>) -> Result<String, S
         return Err("No instances defined in fleet.yaml".into());
     }
 
+    // Write per-instance config files (mcp-config.json, instance.json)
+    let zellij_binary = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "zellij".into());
+    if let Err(e) = FleetManager::write_instance_configs(&config, &zellij_binary) {
+        log::warn!("agend: failed to write instance configs: {e}");
+    }
+
     let layout = FleetManager::generate_layout(&config);
     log::info!("agend: generated layout for {} instances", config.instances.len());
     log::debug!("agend: layout:\n{layout}");

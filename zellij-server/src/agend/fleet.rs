@@ -1,6 +1,8 @@
 //! Fleet manager — generates layout and tracks instance↔terminal mappings.
 
 use super::config::{Defaults, FleetConfig, InstanceConfig};
+use super::mcp::generate_mcp_config;
+use std::path::PathBuf;
 
 /// Information about a running instance.
 #[derive(Debug, Clone)]
@@ -56,6 +58,49 @@ impl FleetManager {
         }
         kdl.push_str("}\n");
         kdl
+    }
+
+    /// Write per-instance config files (mcp-config.json, etc.) to the agend
+    /// instance directories. Returns the instance dir base path.
+    pub fn write_instance_configs(
+        config: &FleetConfig,
+        zellij_binary: &str,
+    ) -> std::io::Result<PathBuf> {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        let base = PathBuf::from(home).join(".agend").join("instances");
+
+        for (name, ic) in &config.instances {
+            let instance_dir = base.join(name);
+            std::fs::create_dir_all(&instance_dir)?;
+
+            // Write mcp-config.json
+            let socket_path = instance_dir.join("channel.sock");
+            let tool_set = "full"; // TODO: per-instance tool_set config
+            let mcp_config = generate_mcp_config(
+                zellij_binary,
+                &socket_path.to_string_lossy(),
+                tool_set,
+            );
+            let mcp_config_path = instance_dir.join("mcp-config.json");
+            std::fs::write(
+                &mcp_config_path,
+                serde_json::to_string_pretty(&mcp_config).unwrap(),
+            )?;
+
+            // Write instance metadata
+            let meta = serde_json::json!({
+                "name": name,
+                "backend": ic.backend_or(&config.defaults),
+                "working_directory": ic.working_directory.display().to_string(),
+                "description": ic.description,
+                "tags": ic.tags,
+            });
+            std::fs::write(
+                instance_dir.join("instance.json"),
+                serde_json::to_string_pretty(&meta).unwrap(),
+            )?;
+        }
+        Ok(base)
     }
 }
 
