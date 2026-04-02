@@ -808,7 +808,7 @@ fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
         bytes.push(b'\r'); // Enter to submit
         super::send_daemon_action(super::DaemonAction::Write(tid, bytes));
 
-        super::debug_log(&format!("inject: tid={} instance={} len={}", tid, instance_name, formatted_text.len()));
+        log::debug!("agend: inject {} bytes into tid={} ({})", formatted_text.len(), tid, instance_name);
         log::debug!(
             "agend daemon: injected {} bytes into terminal {} (instance '{}')",
             formatted_text.len(), tid, instance_name

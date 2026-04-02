@@ -1975,12 +1975,8 @@ fn init_session(
 
     // AgEnD hook: start the monitor thread if in agend mode
     #[cfg(feature = "agend")]
-    {
-        let agend_mode = std::env::var("AGEND_MODE").is_ok();
-        agend::debug_log(&format!("init_session: AGEND_MODE={}", agend_mode));
-        if agend_mode {
-            agend::start_monitor();
-        }
+    if std::env::var("AGEND_MODE").is_ok() {
+        agend::start_monitor();
     }
 
     SessionMetaData {

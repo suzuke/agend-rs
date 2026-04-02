@@ -208,22 +208,12 @@ impl Monitor {
         let mut actions = Vec::new();
         match event {
             PtyEvent::Register(tid, pane_name) => {
-                super::debug_log(&format!("monitor: PtyEvent::Register tid={} name={} backends={:?}", tid, pane_name, self.instance_backends.keys().collect::<Vec<_>>()));
                 if let Some(backend) = self.instance_backends.get(&pane_name).cloned() {
                     self.register(tid, pane_name, backend);
-                } else {
-                    super::debug_log(&format!("monitor: pane '{}' NOT in fleet config", pane_name));
                 }
                 return actions;
             },
             PtyEvent::Bytes(tid, bytes) => {
-                if self.terminals.is_empty() {
-                    // Log once to show we're getting bytes but no terminals registered
-                    static LOGGED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-                    if !LOGGED.swap(true, std::sync::atomic::Ordering::Relaxed) {
-                        super::debug_log(&format!("monitor: receiving Bytes(tid={}) but NO terminals registered!", tid));
-                    }
-                }
                 if let Some(state) = self.terminals.get_mut(&tid) {
                     if state.ready {
                         return actions;
@@ -231,25 +221,13 @@ impl Monitor {
                     state.append(&bytes);
                     let text = state.text();
 
-                    // Debug: log text content (take last 200 chars safely)
-                    {
-                        static TEXT_LOG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                        let n = TEXT_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if n < 5 || (text.trim().len() > 5 && n < 20) {
-                            let tail: String = text.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
-                            super::debug_log(&format!(
-                                "monitor: tid={} raw={} stripped={} tail: {:?}",
-                                tid, state.buf.len(), text.len(), tail
-                            ));
-                        }
-                    }
-
                     // 1. Check for dialog BEFORE ready (dialog can look like ready)
                     if DIALOG_PATTERN.is_match(&text) && state.dialog_attempts < 5 {
                         state.dialog_attempts += 1;
-                        let preview: String = text.chars().take(200).collect();
-                        super::debug_log(&format!("DIALOG DETECTED for '{}' (attempt {}), text: {}",
-                            state.instance_name, state.dialog_attempts, preview));
+                        log::info!(
+                            "agend monitor: dialog detected for '{}' (attempt {})",
+                            state.instance_name, state.dialog_attempts
+                        );
 
                         if DIALOG_NO_SELECTED.is_match(&text) {
                             // Navigate down to "Yes" option, then Enter
@@ -320,24 +298,11 @@ impl Monitor {
     /// Run the monitor loop. Blocks the calling thread.
     pub fn run(mut self) {
         let rx = &PTY_CHANNEL.1;
-        super::debug_log("monitor: run() started, waiting for events");
-        let mut event_count: u64 = 0;
+        log::info!("agend monitor: started");
         loop {
             match rx.recv() {
                 Ok(event) => {
-                    event_count += 1;
-                    if event_count <= 3 || (event_count <= 50 && event_count % 10 == 0) {
-                        let desc = match &event {
-                            PtyEvent::Bytes(tid, b) => format!("Bytes(tid={}, len={})", tid, b.len()),
-                            PtyEvent::Register(tid, name) => format!("Register(tid={}, name={})", tid, name),
-                            PtyEvent::Closed(tid) => format!("Closed(tid={})", tid),
-                        };
-                        super::debug_log(&format!("monitor: event #{}: {}", event_count, desc));
-                    }
                     let actions = self.process(event);
-                    if !actions.is_empty() {
-                        super::debug_log(&format!("monitor: produced {} actions", actions.len()));
-                    }
                     for action in actions {
                         let _ = ACTION_CHANNEL.0.try_send(action);
                     }

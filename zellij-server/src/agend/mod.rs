@@ -78,7 +78,7 @@ static TERMINAL_REGISTRY: Lazy<RwLock<HashMap<String, u32>>> =
 /// Updates BOTH the global registry (for daemon) AND notifies the monitor
 /// (for dialog detection and ready pattern matching).
 pub fn register_terminal(instance_name: &str, terminal_id: u32) {
-    debug_log(&format!("register_terminal: {} → tid {}", instance_name, terminal_id));
+    log::info!("agend: register_terminal {} → tid {}", instance_name, terminal_id);
     monitor::send_pty_event(PtyEvent::Register(terminal_id, instance_name.to_owned()));
 
     if let Ok(mut reg) = TERMINAL_REGISTRY.write() {
@@ -130,12 +130,6 @@ pub fn generate_layout_from_config(config_dir: Option<&str>) -> Result<String, S
 /// Called from the screen thread's PtyBytes handler (hook #2).
 #[inline]
 pub fn on_pty_bytes(terminal_id: u32, bytes: &[u8]) {
-    // Log first few calls to verify hook is firing
-    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    if n < 5 || (n < 100 && n % 20 == 0) {
-        debug_log(&format!("on_pty_bytes: tid={} len={} (call #{})", terminal_id, bytes.len(), n));
-    }
     monitor::send_pty_event(PtyEvent::Bytes(terminal_id, bytes.to_vec()));
 }
 
@@ -155,7 +149,7 @@ pub fn on_new_pane(pid: PaneId, pane_name: Option<&str>) {
 /// Start the agend monitor thread AND the daemon (IPC servers + tool routing).
 /// Called during server session init (hook #3).
 pub fn start_monitor() {
-    debug_log("start_monitor() called — starting PTY monitor + daemon + health");
+    log::info!("agend: start_monitor() — starting PTY monitor + daemon + health");
 
     // Start PTY monitor thread
     std::thread::Builder::new()
