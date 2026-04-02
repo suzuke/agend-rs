@@ -309,6 +309,10 @@ impl Daemon {
             "checkout_repo" => self.handle_checkout_repo(args),
             "release_repo" => self.handle_release_repo(args),
 
+            // ── Role management ─────────────────────────────────────────
+            "set_role" => self.handle_set_role(instance_name, args),
+            "get_role" => self.handle_get_role(args),
+
             // ── Unknown ─────────────────────────────────────────────────
             _ => Err(format!("unknown tool: {tool}")),
         }
@@ -543,6 +547,56 @@ impl Daemon {
 
             log::info!("agend daemon: creating instance '{name}' at {dir}");
             Ok(json!({"created": true, "name": name, "directory": dir}))
+        }
+    }
+
+    fn handle_set_role(
+        &self,
+        caller: &str,
+        args: &Value,
+    ) -> Result<Value, String> {
+        let target = args["instance"].as_str().unwrap_or(caller);
+        let role = args["role"].as_str().unwrap_or("");
+        let append = args["append"].as_bool().unwrap_or(false);
+
+        // Safety: agent cannot set its own role
+        if target == caller {
+            return Err("cannot set your own role — ask another instance or the user".into());
+        }
+
+        if role.is_empty() && !append {
+            return Err("role text is required".into());
+        }
+
+        let role_path = super::paths::instance_dir(target).join("role.md");
+        std::fs::create_dir_all(role_path.parent().unwrap())
+            .map_err(|e| format!("mkdir: {e}"))?;
+
+        if append {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&role_path)
+                .map_err(|e| format!("open: {e}"))?;
+            writeln!(f, "\n{}", role).map_err(|e| format!("write: {e}"))?;
+        } else {
+            std::fs::write(&role_path, role).map_err(|e| format!("write: {e}"))?;
+        }
+
+        log::info!("agend daemon: set_role for '{}' (append={})", target, append);
+        Ok(json!({"ok": true, "instance": target, "append": append}))
+    }
+
+    fn handle_get_role(&self, args: &Value) -> Result<Value, String> {
+        let target = args["instance"].as_str().unwrap_or("");
+        if target.is_empty() {
+            return Err("instance name is required".into());
+        }
+        let role_path = super::paths::instance_dir(target).join("role.md");
+        match std::fs::read_to_string(&role_path) {
+            Ok(content) => Ok(json!({"instance": target, "role": content})),
+            Err(_) => Ok(json!({"instance": target, "role": null})),
         }
     }
 

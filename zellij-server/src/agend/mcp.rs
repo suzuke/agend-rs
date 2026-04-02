@@ -390,6 +390,30 @@ fn tool_definitions() -> Value {
                     },
                     "required": ["path"]
                 }
+            },
+            {
+                "name": "set_role",
+                "description": "Set the role/system prompt for another instance. Cannot set your own role.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "instance": {"type": "string", "description": "Target instance name"},
+                        "role": {"type": "string", "description": "Role description text"},
+                        "append": {"type": "boolean", "description": "Append to existing role instead of replacing. Default: false"}
+                    },
+                    "required": ["instance", "role"]
+                }
+            },
+            {
+                "name": "get_role",
+                "description": "Get the current role/system prompt for an instance.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "instance": {"type": "string", "description": "Instance name"}
+                    },
+                    "required": ["instance"]
+                }
             }
         ]
     })
@@ -626,7 +650,7 @@ mod tests {
     fn tool_definitions_has_all_tools() {
         let defs = tool_definitions();
         let tools = defs["tools"].as_array().unwrap();
-        assert!(tools.len() >= 20, "expected at least 20 tools, got {}", tools.len());
+        assert!(tools.len() >= 24, "expected at least 24 tools, got {}", tools.len());
 
         // Verify core tools exist
         let names: Vec<&str> = tools
