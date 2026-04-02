@@ -130,6 +130,12 @@ pub fn generate_layout_from_config(config_dir: Option<&str>) -> Result<String, S
 /// Called from the screen thread's PtyBytes handler (hook #2).
 #[inline]
 pub fn on_pty_bytes(terminal_id: u32, bytes: &[u8]) {
+    // Log first few calls to verify hook is firing
+    static COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if n < 5 || (n < 100 && n % 20 == 0) {
+        debug_log(&format!("on_pty_bytes: tid={} len={} (call #{})", terminal_id, bytes.len(), n));
+    }
     monitor::send_pty_event(PtyEvent::Bytes(terminal_id, bytes.to_vec()));
 }
 

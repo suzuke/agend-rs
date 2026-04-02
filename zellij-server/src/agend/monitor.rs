@@ -304,11 +304,24 @@ impl Monitor {
     /// Run the monitor loop. Blocks the calling thread.
     pub fn run(mut self) {
         let rx = &PTY_CHANNEL.1;
-        log::info!("agend monitor: started");
+        super::debug_log("monitor: run() started, waiting for events");
+        let mut event_count: u64 = 0;
         loop {
             match rx.recv() {
                 Ok(event) => {
+                    event_count += 1;
+                    if event_count <= 3 || (event_count <= 50 && event_count % 10 == 0) {
+                        let desc = match &event {
+                            PtyEvent::Bytes(tid, b) => format!("Bytes(tid={}, len={})", tid, b.len()),
+                            PtyEvent::Register(tid, name) => format!("Register(tid={}, name={})", tid, name),
+                            PtyEvent::Closed(tid) => format!("Closed(tid={})", tid),
+                        };
+                        super::debug_log(&format!("monitor: event #{}: {}", event_count, desc));
+                    }
                     let actions = self.process(event);
+                    if !actions.is_empty() {
+                        super::debug_log(&format!("monitor: produced {} actions", actions.len()));
+                    }
                     for action in actions {
                         let _ = ACTION_CHANNEL.0.try_send(action);
                     }
