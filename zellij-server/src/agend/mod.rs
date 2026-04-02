@@ -3,6 +3,7 @@ pub mod config;
 pub mod daemon;
 pub mod db;
 pub mod fleet;
+pub mod health;
 pub mod ipc;
 pub mod lifecycle;
 pub mod mcp;
@@ -163,6 +164,23 @@ pub fn start_monitor() {
         })
         .expect("failed to spawn agend daemon thread");
     log::info!("agend: daemon thread started");
+
+    // Start health checker (max_age rotation, crash recovery)
+    std::thread::Builder::new()
+        .name("agend_health".into())
+        .spawn(|| {
+            match FleetConfig::load_default() {
+                Ok(config) => {
+                    let checker = health::HealthChecker::from_config(&config);
+                    checker.run(); // blocks
+                },
+                Err(e) => {
+                    log::error!("agend health: failed to load fleet config: {e}");
+                },
+            }
+        })
+        .expect("failed to spawn agend health thread");
+    log::info!("agend: health checker started");
 }
 
 /// Drain pending actions (from both monitor and daemon) and write them to terminals.

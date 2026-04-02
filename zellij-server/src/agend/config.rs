@@ -46,6 +46,24 @@ pub struct Defaults {
     pub model: Option<String>,
     #[serde(default)]
     pub restart_policy: RestartPolicy,
+    pub context_guardian: Option<ContextGuardianConfig>,
+}
+
+impl Defaults {
+    pub fn max_age_hours(&self) -> Option<u32> {
+        self.context_guardian.as_ref().map(|c| c.max_age_hours)
+    }
+    pub fn grace_period_ms(&self) -> Option<u64> {
+        self.context_guardian.as_ref().map(|c| c.grace_period_ms)
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContextGuardianConfig {
+    #[serde(default)]
+    pub grace_period_ms: u64,
+    #[serde(default)]
+    pub max_age_hours: u32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -81,12 +99,19 @@ pub struct InstanceConfig {
     pub topic_id: Option<i64>,
     #[serde(default)]
     pub general_topic: bool,
+    pub context_guardian: Option<ContextGuardianConfig>,
 }
 
 impl InstanceConfig {
     /// Resolve the backend name, falling back to fleet defaults.
     pub fn backend_or<'a>(&'a self, defaults: &'a Defaults) -> &'a str {
         self.backend.as_deref().unwrap_or(&defaults.backend)
+    }
+    pub fn max_age_hours(&self) -> Option<u32> {
+        self.context_guardian.as_ref().map(|c| c.max_age_hours)
+    }
+    pub fn grace_period_ms(&self) -> Option<u64> {
+        self.context_guardian.as_ref().map(|c| c.grace_period_ms)
     }
 }
 
