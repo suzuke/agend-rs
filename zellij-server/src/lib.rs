@@ -10,6 +10,9 @@ pub mod output;
 pub mod panes;
 pub mod tab;
 
+#[cfg(feature = "agend")]
+pub mod agend;
+
 mod background_jobs;
 mod global_async_runtime;
 mod logging_pipe;

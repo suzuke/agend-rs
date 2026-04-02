@@ -131,6 +131,10 @@ pub enum Command {
         "zellij [--session <OTHER SESSION NAME>] subscribe [OPTIONS] --pane-id..."
     ))]
     Subscribe(SubscribeCli),
+
+    /// Start the AgEnD fleet manager (requires --features agend)
+    #[clap(name = "agend")]
+    Agend,
 }
 
 #[derive(Debug, Parser, Clone, Serialize, Deserialize)]

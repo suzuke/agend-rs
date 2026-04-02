@@ -75,3 +75,4 @@ wasmi = { version = "0.51.3", features = ["std"] }
 
 [features]
 web_server_capability = ["zellij-utils/web_server_capability"]
+agend = []

@@ -19,6 +19,20 @@ fn main() {
     create_config_and_cache_folders();
     let opts = CliArgs::parse();
 
+    // AgEnD hook: intercept `zellij agend` subcommand
+    if let Some(Command::Agend) = &opts.command {
+        #[cfg(feature = "agend")]
+        {
+            zellij_server::agend::run();
+            std::process::exit(0);
+        }
+        #[cfg(not(feature = "agend"))]
+        {
+            eprintln!("error: agend feature is not enabled. Rebuild with: cargo build --features agend");
+            std::process::exit(1);
+        }
+    }
+
     {
         let config = Config::try_from(&opts).ok();
         if let Some(Command::Action(cli_action)) = opts.command {
