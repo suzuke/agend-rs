@@ -229,6 +229,15 @@ impl Monitor {
                     state.append(&bytes);
                     let text = state.text();
 
+                    // Debug: log buffer content periodically
+                    static TEXT_LOG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                    let n = TEXT_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    if n < 3 || (n < 30 && n % 10 == 0) {
+                        let preview = if text.len() > 300 { &text[text.len()-300..] } else { &text };
+                        super::debug_log(&format!("monitor: tid={} buf_len={} text_tail: {:?}",
+                            tid, state.buf.len(), preview));
+                    }
+
                     // 1. Check for dialog BEFORE ready (dialog can look like ready)
                     if DIALOG_PATTERN.is_match(&text) && state.dialog_attempts < 5 {
                         state.dialog_attempts += 1;
