@@ -62,7 +62,12 @@ static TERMINAL_REGISTRY: Lazy<RwLock<HashMap<String, u32>>> =
     Lazy::new(|| RwLock::new(HashMap::new()));
 
 /// Register a terminal_id for an instance name.
+/// Updates BOTH the global registry (for daemon) AND notifies the monitor
+/// (for dialog detection and ready pattern matching).
 pub fn register_terminal(instance_name: &str, terminal_id: u32) {
+    // Notify monitor so it can track this terminal for dialog/ready detection
+    monitor::send_pty_event(PtyEvent::Register(terminal_id, instance_name.to_owned()));
+
     if let Ok(mut reg) = TERMINAL_REGISTRY.write() {
         log::info!(
             "agend registry: {} → terminal {}",
