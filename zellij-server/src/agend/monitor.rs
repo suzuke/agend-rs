@@ -61,22 +61,24 @@ fn backend_patterns() -> Vec<BackendPatterns> {
         },
         BackendPatterns {
             name: "gemini-cli",
-            ready: Regex::new(r"Type your message|\? for shortcuts|YOLO Ctrl").unwrap(),
+            ready: Regex::new(r"Type\s*your\s*message|\?\s*for\s*shortcuts|YOLO\s*Ctrl").unwrap(),
         },
         BackendPatterns {
             name: "codex",
-            ready: Regex::new(r"% left|OpenAI Codex").unwrap(),
+            ready: Regex::new(r"%\s*left|OpenAI\s*Codex").unwrap(),
         },
         BackendPatterns {
             name: "opencode",
-            ready: Regex::new(r"Ask anything|ctrl\+p commands").unwrap(),
+            ready: Regex::new(r"Ask\s*anything|ctrl\+p\s*commands").unwrap(),
         },
     ]
 }
 
 /// Dialog patterns (generic across all backends).
+// NOTE: ANSI stripping removes cursor positioning, so TUI text loses all spaces.
+// "I trust this folder" becomes "Itrustthisfolder". Patterns use \s* for optional spaces.
 static DIALOG_PATTERN: Lazy<Regex> = Lazy::new(|| {
-    Regex::new(r"[Nn]o, exit|[Nn]o, quit|[Dd]on't trust|[Ii] accept|[Ii] trust|[Yy]es, continue|[Tt]rust folder")
+    Regex::new(r"[Nn]o,\s*exit|[Nn]o,\s*quit|[Dd]on't\s*trust|[Ii]\s*accept|[Ii]\s*trust|[Yy]es,\s*continue|[Tt]rust\s*folder")
         .unwrap()
 });
 
@@ -86,15 +88,15 @@ static DIALOG_NO_SELECTED: Lazy<Regex> =
 
 /// Gemini "Don't trust" is selected — need to navigate up.
 static DIALOG_DONT_TRUST_SELECTED: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[❯›]\s*Don't trust").unwrap());
+    Lazy::new(|| Regex::new(r"[❯›]\s*[Dd]on't\s*trust").unwrap());
 
 /// Resume session picker.
 static RESUME_SESSION_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"[Rr]esume [Ss]ession").unwrap());
+    Lazy::new(|| Regex::new(r"[Rr]esume\s*[Ss]ession").unwrap());
 
 /// Fatal: command not found.
 static NOT_FOUND_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"command not found|[Nn]ot found").unwrap());
+    Lazy::new(|| Regex::new(r"command\s*not\s*found|[Nn]ot\s*found").unwrap());
 
 // ── Per-terminal state ──────────────────────────────────────────────────
 
