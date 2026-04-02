@@ -153,8 +153,11 @@ impl TelegramAdapter {
             .name("agend_telegram".into())
             .spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    // Only enable io+time, NOT signals — tokio signal handlers
+                    // conflict with Zellij's daemonized server signal handling
                     let rt = tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
+                        .enable_io()
+                        .enable_time()
                         .build()
                         .expect("failed to build tokio runtime for telegram");
                     rt.block_on(async {
