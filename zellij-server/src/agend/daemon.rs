@@ -321,26 +321,13 @@ impl Daemon {
                 format!("cid-{}-{}", chrono::Utc::now().timestamp_millis(), &uuid::Uuid::new_v4().to_string()[..6])
             });
 
-        // Send via IPC to target instance
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let socket = PathBuf::from(&home)
-            .join(".agend/instances")
-            .join(target)
-            .join("channel.sock");
-
-        let meta = json!({
-            "from_instance": sender,
-            "correlation_id": correlation_id,
-            "request_kind": args.get("request_kind").and_then(|v| v.as_str()).unwrap_or("update"),
-            "requires_reply": args.get("requires_reply").and_then(|v| v.as_bool()).unwrap_or(false),
-            "task_summary": args.get("task_summary").and_then(|v| v.as_str()).unwrap_or(""),
-            "ts": chrono::Utc::now().to_rfc3339(),
-        });
-
-        if let Err(e) = super::ipc::send_to_instance_socket(&socket, "fleet_inbound", message, &meta) {
-            log::warn!("agend daemon: failed to send to {target}: {e}");
-            // Fall through — instance might not have MCP server connected yet
-        }
+        // Inject message directly into the target pane's PTY stdin
+        let request_kind = args.get("request_kind").and_then(|v| v.as_str()).unwrap_or("update");
+        let formatted = format!(
+            "[from:{}] {}\n(Reply using send_to_instance tool, NOT direct text)\n",
+            sender, message
+        );
+        inject_message_to_instance(target, &formatted);
 
         // Post visibility to Telegram if available
         if let Some(ref telegram) = self.telegram {
@@ -357,6 +344,8 @@ impl Daemon {
                 }
             }
         }
+
+        log::info!("agend daemon: {} → {}: {}", sender, target, &message[..message.len().min(100)]);
 
         Ok(json!({
             "sent": true,
@@ -516,24 +505,16 @@ impl Daemon {
 
     fn handle_telegram_inbound(&self, msg: super::telegram::InboundMessage) {
         if let Some(ref target) = msg.target_instance {
-            // Route to specific instance
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-            let socket = PathBuf::from(&home)
-                .join(".agend/instances")
-                .join(target)
-                .join("channel.sock");
-            let meta = json!({
-                "chat_id": msg.chat_id,
-                "message_id": msg.message_id,
-                "user": msg.username,
-                "user_id": msg.user_id,
-                "thread_id": msg.thread_id.unwrap_or_default(),
-                "ts": chrono::Utc::now().to_rfc3339(),
-                "reply_to_text": msg.reply_to_text,
-            });
-            if let Err(e) = super::ipc::send_to_instance_socket(&socket, "fleet_inbound", &msg.text, &meta) {
-                log::warn!("agend daemon: failed to route telegram msg to {target}: {e}");
-            }
+            let thread_id = msg.thread_id.as_deref().unwrap_or("");
+            let formatted = format!(
+                "[user:{} chat_id:{} thread_id:{}] {}\n(Reply using the reply tool with chat_id=\"{}\")\n",
+                msg.username, msg.chat_id, thread_id, msg.text, msg.chat_id
+            );
+            inject_message_to_instance(target, &formatted);
+            log::info!(
+                "agend daemon: telegram {} → {}: {}",
+                msg.username, target, &msg.text[..msg.text.len().min(100)]
+            );
         } else {
             log::debug!("agend daemon: telegram message without target instance, ignoring");
         }
@@ -545,6 +526,33 @@ impl Daemon {
             .get(instance_name)
             .map(|ic| ic.working_directory.display().to_string())
             .unwrap_or_default()
+    }
+}
+
+/// Inject a formatted message into an instance's terminal pane.
+/// Uses the global terminal registry to find the terminal_id,
+/// then sends a DaemonAction::Write via the global channel.
+fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
+    if let Some(tid) = super::terminal_for_instance(instance_name) {
+        // Use Zellij's "bracketed paste" to inject text cleanly
+        // This wraps the text in paste start/end sequences so the CLI
+        // treats it as pasted input rather than typed characters.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"\x1b[200~"); // Bracketed paste start
+        bytes.extend_from_slice(formatted_text.as_bytes());
+        bytes.extend_from_slice(b"\x1b[201~"); // Bracketed paste end
+        bytes.extend_from_slice(b"\r"); // Enter to submit
+
+        super::send_daemon_action(super::DaemonAction::Write(tid, bytes));
+        log::debug!(
+            "agend daemon: injected {} bytes into terminal {} (instance '{}')",
+            formatted_text.len(), tid, instance_name
+        );
+    } else {
+        log::warn!(
+            "agend daemon: no terminal registered for instance '{}', message dropped",
+            instance_name
+        );
     }
 }
 

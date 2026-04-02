@@ -181,6 +181,8 @@ impl Monitor {
             "agend monitor: registered terminal {} for instance '{}' (backend: {})",
             terminal_id, instance_name, backend
         );
+        // Update the global terminal registry so the daemon can find this pane
+        super::register_terminal(&instance_name, terminal_id);
         self.terminals.insert(
             terminal_id,
             TerminalState::new(instance_name, backend),

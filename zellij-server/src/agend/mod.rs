@@ -14,9 +14,62 @@ mod tests;
 
 use crate::panes::PaneId;
 use config::FleetConfig;
+use crossbeam::channel::{self, Receiver, Sender};
 use fleet::FleetManager;
 use monitor::{Monitor, MonitorAction, PtyEvent};
+use once_cell::sync::Lazy;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::RwLock;
+
+// ── Daemon output channel (daemon thread → screen thread → pty_writer) ──
+
+/// Actions the daemon wants to perform on panes.
+pub enum DaemonAction {
+    /// Write bytes to a terminal pane (terminal_id, bytes).
+    Write(u32, Vec<u8>),
+}
+
+static DAEMON_CHANNEL: Lazy<(Sender<DaemonAction>, Receiver<DaemonAction>)> =
+    Lazy::new(|| channel::bounded(256));
+
+/// Send a daemon action to the screen thread for pty_writer delivery.
+pub fn send_daemon_action(action: DaemonAction) {
+    let _ = DAEMON_CHANNEL.0.try_send(action);
+}
+
+fn recv_daemon_action() -> Option<DaemonAction> {
+    DAEMON_CHANNEL.1.try_recv().ok()
+}
+
+// ── Terminal registry (shared: monitor registers, daemon reads) ─────────
+
+/// Global mapping: instance_name → terminal_id.
+/// Updated by the monitor when panes are registered.
+/// Read by the daemon to route messages to the right pane.
+static TERMINAL_REGISTRY: Lazy<RwLock<HashMap<String, u32>>> =
+    Lazy::new(|| RwLock::new(HashMap::new()));
+
+/// Register a terminal_id for an instance name.
+pub fn register_terminal(instance_name: &str, terminal_id: u32) {
+    if let Ok(mut reg) = TERMINAL_REGISTRY.write() {
+        log::info!(
+            "agend registry: {} → terminal {}",
+            instance_name, terminal_id
+        );
+        reg.insert(instance_name.to_owned(), terminal_id);
+    }
+}
+
+/// Look up the terminal_id for an instance name.
+pub fn terminal_for_instance(instance_name: &str) -> Option<u32> {
+    TERMINAL_REGISTRY
+        .read()
+        .ok()
+        .and_then(|reg| reg.get(instance_name).copied())
+}
+
+// ── Public API (called from Zellij hooks) ───────────────────────────────
 
 /// Generate a KDL layout string from fleet.yaml config.
 /// Also writes per-instance config files (mcp-config.json, backend configs).
@@ -112,15 +165,22 @@ pub fn start_monitor() {
     log::info!("agend: daemon thread started");
 }
 
-/// Drain pending monitor actions and write them to terminals.
+/// Drain pending actions (from both monitor and daemon) and write them to terminals.
 /// Called from the screen event loop.
 pub fn drain_actions<F>(mut write_fn: F)
 where
     F: FnMut(u32, Vec<u8>),
 {
+    // Drain monitor actions (dialog dismissal, etc.)
     while let Some(action) = monitor::recv_action() {
         match action {
             MonitorAction::Write(tid, bytes) => write_fn(tid, bytes),
+        }
+    }
+    // Drain daemon actions (message injection from Telegram/cross-instance)
+    while let Some(action) = recv_daemon_action() {
+        match action {
+            DaemonAction::Write(tid, bytes) => write_fn(tid, bytes),
         }
     }
 }
