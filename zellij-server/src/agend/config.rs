@@ -6,10 +6,37 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct FleetConfig {
+    pub channel: Option<ChannelConfig>,
     #[serde(default)]
     pub defaults: Defaults,
     #[serde(default)]
     pub instances: HashMap<String, InstanceConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ChannelConfig {
+    #[serde(rename = "type")]
+    pub channel_type: String, // "telegram" or "discord"
+    #[serde(default = "default_channel_mode")]
+    pub mode: String, // "topic" or "dm"
+    pub bot_token_env: Option<String>,
+    pub group_id: Option<i64>,
+    pub access: Option<AccessConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AccessConfig {
+    #[serde(default = "default_access_mode")]
+    pub mode: String, // "locked" or "pairing"
+    #[serde(default)]
+    pub allowed_users: Vec<i64>,
+}
+
+fn default_channel_mode() -> String {
+    "topic".into()
+}
+fn default_access_mode() -> String {
+    "locked".into()
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -51,6 +78,9 @@ pub struct InstanceConfig {
     pub model: Option<String>,
     #[serde(default)]
     pub skip_permissions: bool,
+    pub topic_id: Option<i64>,
+    #[serde(default)]
+    pub general_topic: bool,
 }
 
 impl InstanceConfig {

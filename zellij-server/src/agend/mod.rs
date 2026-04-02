@@ -3,6 +3,7 @@ pub mod fleet;
 pub mod mcp;
 pub mod monitor;
 pub mod routing;
+pub mod telegram;
 #[cfg(test)]
 mod tests;
 
