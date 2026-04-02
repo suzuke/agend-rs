@@ -229,13 +229,19 @@ impl Monitor {
                     state.append(&bytes);
                     let text = state.text();
 
-                    // Debug: log buffer content periodically
-                    static TEXT_LOG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                    let n = TEXT_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    if n < 3 || (n < 30 && n % 10 == 0) {
-                        let preview = if text.len() > 300 { &text[text.len()-300..] } else { &text };
-                        super::debug_log(&format!("monitor: tid={} buf_len={} text_tail: {:?}",
-                            tid, state.buf.len(), preview));
+                    // Debug: log when text has real content (not just empty from ANSI stripping)
+                    if !text.is_empty() && text.trim().len() > 5 {
+                        static TEXT_LOG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+                        let n = TEXT_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if n < 10 {
+                            let preview = if text.len() > 500 { &text[text.len()-500..] } else { &text };
+                            let dialog_match = DIALOG_PATTERN.is_match(&text);
+                            let ready_match = self.patterns.iter().any(|bp| bp.name == state.backend && bp.ready.is_match(&text));
+                            super::debug_log(&format!(
+                                "monitor: tid={} inst={} len={} dialog={} ready={} text: {:?}",
+                                tid, state.instance_name, text.len(), dialog_match, ready_match, preview
+                            ));
+                        }
                     }
 
                     // 1. Check for dialog BEFORE ready (dialog can look like ready)
