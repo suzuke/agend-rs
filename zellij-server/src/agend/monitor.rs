@@ -192,8 +192,9 @@ impl Monitor {
             "agend monitor: registered terminal {} for instance '{}' (backend: {})",
             terminal_id, instance_name, backend
         );
-        // Update the global terminal registry so the daemon can find this pane
-        super::register_terminal(&instance_name, terminal_id);
+        // NOTE: Do NOT call super::register_terminal() here — it sends PtyEvent::Register
+        // back to us, creating an infinite loop. The global registry is updated by the
+        // caller (layout_applier or on_new_pane) before we get the event.
         self.terminals.insert(
             terminal_id,
             TerminalState::new(instance_name, backend),
