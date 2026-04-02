@@ -5066,6 +5066,18 @@ pub(crate) fn screen_thread_main(
                         break;
                     }
                 }
+
+                // AgEnD hook: drain monitor actions (dialog dismissal writes)
+                #[cfg(feature = "agend")]
+                {
+                    let senders = screen.bus.senders.clone();
+                    crate::agend::drain_actions(|tid, bytes| {
+                        let _ = senders.send_to_pty_writer(
+                            crate::pty_writer::PtyWriteInstruction::Write(bytes, tid, None),
+                        );
+                    });
+                }
+
                 let _ = screen
                     .bus
                     .senders
@@ -5113,6 +5125,10 @@ pub(crate) fn screen_thread_main(
                 mut completion_tx,
                 set_blocking,
             ) => {
+                // AgEnD hook: register new terminal pane for monitoring
+                #[cfg(feature = "agend")]
+                crate::agend::on_new_pane(pid, initial_pane_title.as_deref());
+
                 completion_tx.as_mut().map(|c| c.set_affected_pane_id(pid));
 
                 let blocking_notification = if set_blocking { completion_tx } else { None };

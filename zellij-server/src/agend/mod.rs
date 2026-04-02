@@ -6,6 +6,7 @@ pub mod routing;
 #[cfg(test)]
 mod tests;
 
+use crate::panes::PaneId;
 use config::FleetConfig;
 use fleet::FleetManager;
 use monitor::{Monitor, MonitorAction, PtyEvent};
@@ -37,13 +38,39 @@ pub fn on_pty_bytes(terminal_id: u32, bytes: &[u8]) {
     monitor::send_pty_event(PtyEvent::Bytes(terminal_id, bytes.to_vec()));
 }
 
+/// Notify the monitor about a new pane.
+/// Called from the screen thread's NewPane handler (hook #4).
+#[inline]
+pub fn on_new_pane(pid: PaneId, pane_name: Option<&str>) {
+    if let PaneId::Terminal(tid) = pid {
+        if let Some(name) = pane_name {
+            if !name.is_empty() {
+                monitor::send_pty_event(PtyEvent::Register(tid, name.to_owned()));
+            }
+        }
+    }
+}
+
 /// Start the agend monitor thread.
 /// Called during server session init (hook #3).
 pub fn start_monitor() {
+    // Load fleet config in the monitor thread for instance→backend mapping
     std::thread::Builder::new()
         .name("agend_monitor".into())
         .spawn(|| {
-            let monitor = Monitor::new();
+            let monitor = match FleetConfig::load_default() {
+                Ok(config) => {
+                    log::info!(
+                        "agend monitor: loaded fleet config with {} instances",
+                        config.instances.len()
+                    );
+                    Monitor::with_config(&config)
+                },
+                Err(e) => {
+                    log::warn!("agend monitor: failed to load fleet config: {e}, using empty config");
+                    Monitor::new()
+                },
+            };
             monitor.run();
         })
         .expect("failed to spawn agend monitor thread");
@@ -51,7 +78,7 @@ pub fn start_monitor() {
 }
 
 /// Drain pending monitor actions and write them to terminals.
-/// Called from the screen event loop or a dedicated agend thread.
+/// Called from the screen event loop.
 pub fn drain_actions<F>(mut write_fn: F)
 where
     F: FnMut(u32, Vec<u8>),

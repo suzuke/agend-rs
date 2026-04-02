@@ -13,6 +13,9 @@ use std::collections::HashMap;
 pub enum PtyEvent {
     /// Raw bytes from a terminal pane.
     Bytes(u32, Vec<u8>),
+    /// A new terminal pane was created. Register it for monitoring.
+    /// (terminal_id, pane_name — matches the instance name from fleet.yaml)
+    Register(u32, String),
     /// A terminal pane was closed.
     Closed(u32),
 }
@@ -143,6 +146,8 @@ impl TerminalState {
 pub struct Monitor {
     pub(crate) terminals: HashMap<u32, TerminalState>,
     patterns: Vec<BackendPatterns>,
+    /// Instance name → backend name mapping (from fleet config).
+    instance_backends: HashMap<String, String>,
 }
 
 impl Monitor {
@@ -150,6 +155,23 @@ impl Monitor {
         Self {
             terminals: HashMap::new(),
             patterns: backend_patterns(),
+            instance_backends: HashMap::new(),
+        }
+    }
+
+    /// Create a monitor with fleet config for auto-registration.
+    pub fn with_config(config: &super::config::FleetConfig) -> Self {
+        let instance_backends = config
+            .instances
+            .iter()
+            .map(|(name, ic)| {
+                (name.clone(), ic.backend_or(&config.defaults).to_owned())
+            })
+            .collect();
+        Self {
+            terminals: HashMap::new(),
+            patterns: backend_patterns(),
+            instance_backends,
         }
     }
 
@@ -169,6 +191,18 @@ impl Monitor {
     pub fn process(&mut self, event: PtyEvent) -> Vec<MonitorAction> {
         let mut actions = Vec::new();
         match event {
+            PtyEvent::Register(tid, pane_name) => {
+                // Auto-register if pane name matches an instance from fleet config
+                if let Some(backend) = self.instance_backends.get(&pane_name).cloned() {
+                    self.register(tid, pane_name, backend);
+                } else {
+                    log::debug!(
+                        "agend monitor: pane '{}' (tid={}) not in fleet config, ignoring",
+                        pane_name, tid
+                    );
+                }
+                return actions;
+            },
             PtyEvent::Bytes(tid, bytes) => {
                 if let Some(state) = self.terminals.get_mut(&tid) {
                     if state.ready {

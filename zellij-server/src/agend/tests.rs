@@ -105,4 +105,46 @@ instances:
         let actions = monitor.process(PtyEvent::Bytes(99, b"hello".to_vec()));
         assert!(actions.is_empty());
     }
+
+    #[test]
+    fn monitor_auto_registers_from_config() {
+        let yaml = r#"
+defaults:
+  backend: claude-code
+instances:
+  my-project:
+    working_directory: /tmp/test
+"#;
+        let config: FleetConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut monitor = Monitor::with_config(&config);
+
+        // Register event with matching instance name
+        let actions = monitor.process(PtyEvent::Register(42, "my-project".into()));
+        assert!(actions.is_empty());
+        assert!(monitor.terminals.contains_key(&42));
+        assert_eq!(monitor.terminals[&42].backend, "claude-code");
+
+        // Now PTY bytes should trigger ready detection
+        let actions = monitor.process(PtyEvent::Bytes(42, "❯ ".as_bytes().to_vec()));
+        assert!(actions.is_empty());
+        assert!(monitor.terminals[&42].ready);
+    }
+
+    #[test]
+    fn monitor_register_ignores_unknown_instance() {
+        let yaml = r#"
+defaults:
+  backend: claude-code
+instances:
+  my-project:
+    working_directory: /tmp/test
+"#;
+        let config: FleetConfig = serde_yaml::from_str(yaml).unwrap();
+        let mut monitor = Monitor::with_config(&config);
+
+        // Unknown pane name → not registered
+        let actions = monitor.process(PtyEvent::Register(99, "random-pane".into()));
+        assert!(actions.is_empty());
+        assert!(!monitor.terminals.contains_key(&99));
+    }
 }
