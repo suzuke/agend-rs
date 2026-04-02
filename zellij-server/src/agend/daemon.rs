@@ -53,10 +53,13 @@ impl Daemon {
 
         // Start Telegram adapter if configured
         // Start Telegram adapter if configured
-        let telegram = TelegramAdapter::from_config(&config).map(|adapter| {
-            super::debug_log("daemon: starting Telegram adapter");
-            adapter.run()
-        });
+        // TODO: teloxide crashes Zellij's daemonized server (likely signal/runtime conflict)
+        // Disabled until we find the root cause
+        let telegram: Option<TelegramSender> = None;
+        if config.channel.is_some() {
+            super::debug_log("daemon: Telegram configured but DISABLED (teloxide server conflict)");
+            log::warn!("agend: Telegram adapter disabled due to server compatibility issue");
+        }
 
         Self {
             config,
