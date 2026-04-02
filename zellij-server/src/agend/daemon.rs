@@ -542,14 +542,42 @@ impl Daemon {
                 })
                 .unwrap_or("new-instance");
 
-            // Create a simple tab with the backend command
-            let (cmd, cmd_args) = super::fleet::simple_command(backend);
-            super::send_daemon_action(super::DaemonAction::NewTab {
-                name: name.to_owned(),
-                command: cmd,
-                args: cmd_args,
-                cwd: PathBuf::from(dir),
-            });
+            // Write full backend config (with --mcp-config etc.)
+            let instance_dir = super::paths::instance_dir(name);
+            let socket_path = instance_dir.join("channel.sock");
+            let zellij_binary = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "zellij".into());
+            let work_dir = PathBuf::from(dir);
+
+            let bcfg = super::backend::BackendConfig {
+                instance_name: name,
+                display_name: None,
+                instance_dir: &instance_dir,
+                working_directory: &work_dir,
+                mcp_server_binary: &zellij_binary,
+                socket_path: &socket_path,
+                system_prompt: args["description"].as_str(),
+                skip_permissions: true,
+                model: args["model"].as_str().or(self.config.defaults.model.as_deref()),
+                tool_set: "full",
+                session_id: None,
+            };
+
+            match super::backend::write_config(backend, &bcfg) {
+                Ok(spawn) => {
+                    let parts: Vec<&str> = spawn.command.split_whitespace().collect();
+                    if !parts.is_empty() {
+                        super::send_daemon_action(super::DaemonAction::NewTab {
+                            name: name.to_owned(),
+                            command: parts[0].to_owned(),
+                            args: parts[1..].iter().map(|s| s.to_string()).collect(),
+                            cwd: work_dir,
+                        });
+                    }
+                },
+                Err(e) => return Err(format!("failed to write config: {e}")),
+            }
 
             log::info!("agend daemon: creating instance '{name}' at {dir}");
             Ok(json!({"created": true, "name": name, "directory": dir}))
