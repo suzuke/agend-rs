@@ -136,12 +136,13 @@ fn tool_definitions() -> Value {
             },
             {
                 "name": "broadcast",
-                "description": "Send a message to multiple instances at once.",
+                "description": "Send a message to multiple instances at once. Use tags to filter by role/project.",
                 "inputSchema": {
                     "type": "object",
                     "properties": {
                         "message": {"type": "string"},
-                        "targets": {"type": "array", "items": {"type": "string"}},
+                        "targets": {"type": "array", "items": {"type": "string"}, "description": "Specific instance names. Omit to use tags or send to all."},
+                        "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags (e.g. ['dev'], ['reviewer']). Only used when targets is omitted."},
                         "task_summary": {"type": "string"},
                         "request_kind": {"type": "string", "enum": ["query", "task", "update"]},
                         "requires_reply": {"type": "boolean"}
@@ -151,10 +152,12 @@ fn tool_definitions() -> Value {
             },
             {
                 "name": "list_instances",
-                "description": "List all currently running instances.",
+                "description": "List all currently running instances. Optionally filter by tags.",
                 "inputSchema": {
                     "type": "object",
-                    "properties": {}
+                    "properties": {
+                        "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags (e.g. ['dev'], ['reviewer']). Returns instances matching ANY tag."}
+                    }
                 }
             },
             {

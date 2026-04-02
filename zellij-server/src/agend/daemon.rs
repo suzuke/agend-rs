@@ -155,7 +155,7 @@ impl Daemon {
             // ── Cross-instance tools ────────────────────────────────────
             "send_to_instance" => self.handle_send_to_instance(instance_name, args),
             "broadcast" => self.handle_broadcast(instance_name, args),
-            "list_instances" => self.handle_list_instances(),
+            "list_instances" => self.handle_list_instances(args),
             "describe_instance" => self.handle_describe_instance(args),
             "request_information" => {
                 let target = args["target_instance"].as_str().unwrap_or("");
@@ -371,11 +371,23 @@ impl Daemon {
 
     fn handle_broadcast(&self, sender: &str, args: &Value) -> Result<Value, String> {
         let message = args["message"].as_str().unwrap_or("");
+        let filter_tags: Vec<String> = args["tags"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect())
+            .unwrap_or_default();
+
         let targets: Vec<String> = args["targets"]
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect())
             .unwrap_or_else(|| {
-                self.config.instances.keys().filter(|n| n.as_str() != sender).cloned().collect()
+                self.config.instances.iter()
+                    .filter(|(n, ic)| {
+                        n.as_str() != sender
+                            && (filter_tags.is_empty()
+                                || filter_tags.iter().any(|t| ic.tags.contains(t)))
+                    })
+                    .map(|(n, _)| n.clone())
+                    .collect()
             });
 
         let mut sent = 0;
@@ -394,11 +406,20 @@ impl Daemon {
         Ok(json!({ "sent": sent, "targets": targets }))
     }
 
-    fn handle_list_instances(&self) -> Result<Value, String> {
+    fn handle_list_instances(&self, args: &Value) -> Result<Value, String> {
+        let filter_tags: Vec<String> = args["tags"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect())
+            .unwrap_or_default();
+
         let instances: Vec<Value> = self
             .config
             .instances
             .iter()
+            .filter(|(_, ic)| {
+                filter_tags.is_empty()
+                    || filter_tags.iter().any(|t| ic.tags.contains(t))
+            })
             .map(|(name, ic)| {
                 json!({
                     "name": name,
