@@ -16,6 +16,15 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
+/// Runtime instance info for dynamically created instances.
+#[derive(Debug, Clone, serde::Serialize)]
+struct RuntimeInstance {
+    name: String,
+    backend: String,
+    working_directory: String,
+    description: Option<String>,
+}
+
 /// The daemon manages all IPC servers and routes tool calls.
 pub struct Daemon {
     config: FleetConfig,
@@ -25,6 +34,8 @@ pub struct Daemon {
     ipc_receivers: HashMap<String, Receiver<IpcRequest>>,
     /// Telegram adapter sender (if configured)
     telegram: Option<TelegramSender>,
+    /// Dynamically created instances (not in fleet.yaml)
+    runtime_instances: Arc<RwLock<HashMap<String, RuntimeInstance>>>,
 }
 
 impl Daemon {
@@ -63,6 +74,7 @@ impl Daemon {
             config,
             db,
             routing: Arc::new(RwLock::new(routing)),
+            runtime_instances: Arc::new(RwLock::new(HashMap::new())),
             ipc_receivers,
             telegram,
         }
@@ -422,7 +434,8 @@ impl Daemon {
             .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect())
             .unwrap_or_default();
 
-        let instances: Vec<Value> = self
+        // Merge fleet.yaml instances + runtime (dynamically created) instances
+        let mut instances: Vec<Value> = self
             .config
             .instances
             .iter()
@@ -442,6 +455,22 @@ impl Daemon {
                 })
             })
             .collect();
+
+        // Add runtime instances
+        let runtime = self.runtime_instances.read().unwrap_or_else(|e| e.into_inner());
+        for (name, ri) in runtime.iter() {
+            if !self.config.instances.contains_key(name) {
+                instances.push(json!({
+                    "name": name,
+                    "backend": ri.backend,
+                    "working_directory": ri.working_directory,
+                    "description": ri.description,
+                    "tags": [],
+                    "dynamic": true,
+                }));
+            }
+        }
+
         Ok(json!(instances))
     }
 
@@ -577,6 +606,16 @@ impl Daemon {
                     }
                 },
                 Err(e) => return Err(format!("failed to write config: {e}")),
+            }
+
+            // Register in runtime instances so list_instances shows it
+            if let Ok(mut rt) = self.runtime_instances.write() {
+                rt.insert(name.to_owned(), RuntimeInstance {
+                    name: name.to_owned(),
+                    backend: backend.to_owned(),
+                    working_directory: dir.to_owned(),
+                    description: args["description"].as_str().map(|s| s.to_owned()),
+                });
             }
 
             log::info!("agend daemon: creating instance '{name}' at {dir}");
