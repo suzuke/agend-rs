@@ -75,7 +75,7 @@ wasmi = { version = "0.51.3", features = ["std"] }
 
 [features]
 web_server_capability = ["zellij-utils/web_server_capability"]
-agend = ["serde_yaml", "teloxide", "rusqlite"]
+agend = ["serde_yaml", "rusqlite"]
 
 [dependencies.serde_yaml]
 version = "0.9"
@@ -86,8 +86,5 @@ version = "0.30"
 optional = true
 features = ["bundled"]
 
-[dependencies.teloxide]
-version = "0.13"
-optional = true
-default-features = false
-features = ["macros", "rustls"]
+## teloxide removed — conflicts with Zellij's daemonized server
+## Using plain HTTP via isahc (already in Zellij deps) instead
