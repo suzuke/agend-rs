@@ -641,15 +641,18 @@ impl Daemon {
 /// then sends a DaemonAction::Write via the global channel.
 fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
     if let Some(tid) = super::terminal_for_instance(instance_name) {
-        // Write text as bracketed paste (so CLI doesn't interpret special chars)
+        // Send text as bracketed paste so multi-line content isn't interpreted as keystrokes
         let mut paste = Vec::new();
         paste.extend_from_slice(b"\x1b[200~");
         paste.extend_from_slice(formatted_text.as_bytes());
         paste.extend_from_slice(b"\x1b[201~");
         super::send_daemon_action(super::DaemonAction::Write(tid, paste));
 
-        // Submit with Enter — use \n which works for Claude Code's input handling
-        super::send_daemon_action(super::DaemonAction::Write(tid, b"\n".to_vec()));
+        // Submit with Enter (\r = carriage return, same as physical Enter key)
+        // Must be a separate write so CLI processes paste-end before seeing Enter
+        super::send_daemon_action(super::DaemonAction::Write(tid, b"\r".to_vec()));
+
+        super::debug_log(&format!("inject: tid={} instance={} len={}", tid, instance_name, formatted_text.len()));
         log::debug!(
             "agend daemon: injected {} bytes into terminal {} (instance '{}')",
             formatted_text.len(), tid, instance_name
