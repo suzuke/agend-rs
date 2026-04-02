@@ -147,8 +147,6 @@ impl FleetConfig {
 
     /// Load fleet.yaml from the default AgEnD config directory (~/.agend/).
     pub fn load_default() -> anyhow::Result<Self> {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let agend_dir = PathBuf::from(home).join(".agend");
-        Self::load(&agend_dir)
+        Self::load(&super::paths::agend_home())
     }
 }

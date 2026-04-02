@@ -4,8 +4,15 @@
 //! configuration requirements. This module handles writing the right files
 //! and building the right command line for each.
 
-use serde_json::json;
+use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+
+// Shared constants to avoid magic strings
+const MCP_SERVER_KEY: &str = "agend";
+const MCP_SUBCOMMAND: &str = "agend-mcp-server";
+const ENV_SOCKET_PATH: &str = "AGEND_SOCKET_PATH";
+const ENV_TOOL_SET: &str = "AGEND_TOOL_SET";
+const ENV_INSTANCE_NAME: &str = "AGEND_INSTANCE_NAME";
 
 /// Configuration needed to launch a backend.
 pub struct BackendConfig<'a> {
@@ -27,39 +34,53 @@ pub struct SpawnCommand {
     pub env: Vec<(String, String)>,
 }
 
+// ── Shared helpers ──────────────────────────────────────────────────────
+
+/// Build standard MCP server JSON config block.
+fn mcp_server_entry(binary: &str, socket_path: &Path, instance_name: &str, tool_set: &str) -> Value {
+    json!({
+        "command": binary,
+        "args": [MCP_SUBCOMMAND],
+        "env": {
+            ENV_SOCKET_PATH: socket_path.to_string_lossy(),
+            ENV_INSTANCE_NAME: instance_name,
+            ENV_TOOL_SET: tool_set,
+        }
+    })
+}
+
+/// Write system prompt to a file if provided.
+fn write_system_prompt(cfg: &BackendConfig, path: &Path) -> std::io::Result<()> {
+    if let Some(prompt) = cfg.system_prompt {
+        std::fs::write(path, prompt)?;
+    }
+    Ok(())
+}
+
+/// Standard instance name env var tuple.
+fn instance_env(name: &str) -> (String, String) {
+    (ENV_INSTANCE_NAME.into(), name.into())
+}
+
 // ── Claude Code ─────────────────────────────────────────────────────────
 
 pub fn write_claude_code_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> {
     std::fs::create_dir_all(cfg.instance_dir)?;
 
-    // 1. mcp-config.json
     let mcp_config = json!({
-        "mcpServers": {
-            "agend": {
-                "command": cfg.mcp_server_binary,
-                "args": ["agend-mcp-server"],
-                "env": {
-                    "AGEND_SOCKET_PATH": cfg.socket_path.to_string_lossy(),
-                    "AGEND_TOOL_SET": cfg.tool_set,
-                }
-            }
-        }
+        "mcpServers": { MCP_SERVER_KEY: mcp_server_entry(cfg.mcp_server_binary, cfg.socket_path, cfg.instance_name, cfg.tool_set) }
     });
     let mcp_path = cfg.instance_dir.join("mcp-config.json");
     std::fs::write(&mcp_path, serde_json::to_string_pretty(&mcp_config).unwrap())?;
 
-    // 2. claude-settings.json (minimal — statusline not needed for Zellij)
-    let settings = json!({});
+    // Zellij handles statusline so this is minimal
     let settings_path = cfg.instance_dir.join("claude-settings.json");
-    std::fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap())?;
+    std::fs::write(&settings_path, "{}")?;
 
-    // 3. system-prompt.md (optional)
     let prompt_path = cfg.instance_dir.join("system-prompt.md");
-    if let Some(prompt) = cfg.system_prompt {
-        std::fs::write(&prompt_path, prompt)?;
-    }
+    write_system_prompt(cfg, &prompt_path)?;
 
-    // 4. Pre-approve API key in ~/.claude.json
+    // Prevents interactive API key approval prompt on startup
     pre_approve_claude_api_key();
 
     // Build command
@@ -81,7 +102,7 @@ pub fn write_claude_code_config(cfg: &BackendConfig) -> std::io::Result<SpawnCom
     }
 
     let mut env = vec![
-        ("AGEND_INSTANCE_NAME".into(), cfg.instance_name.into()),
+        instance_env(cfg.instance_name),
     ];
     // Forward API keys if set
     if let Ok(key) = std::env::var("ANTHROPIC_API_KEY") {
@@ -144,10 +165,11 @@ pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> 
 
     // MCP setup script
     let setup = format!(
-        "codex mcp add agend --env AGEND_INSTANCE_NAME=\"{}\" --env AGEND_SOCKET_PATH=\"{}\" -- {} agend-mcp-server 2>/dev/null || true\n",
-        cfg.instance_name,
-        cfg.socket_path.display(),
-        cfg.mcp_server_binary,
+        "codex mcp add {key} --env {env_name}=\"{name}\" --env {env_sock}=\"{sock}\" -- {bin} {sub} 2>/dev/null || true\n",
+        key = MCP_SERVER_KEY,
+        env_name = ENV_INSTANCE_NAME, name = cfg.instance_name,
+        env_sock = ENV_SOCKET_PATH, sock = cfg.socket_path.display(),
+        bin = cfg.mcp_server_binary, sub = MCP_SUBCOMMAND,
     );
     let setup_path = cfg.instance_dir.join("setup-mcp.sh");
     std::fs::write(&setup_path, &setup)?;
@@ -169,7 +191,7 @@ pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> 
 
     Ok(SpawnCommand {
         command: format!("codex {}", args.join(" ")),
-        env: vec![("AGEND_INSTANCE_NAME".into(), cfg.instance_name.into())],
+        env: vec![instance_env(cfg.instance_name)],
     })
 }
 
@@ -182,27 +204,14 @@ pub fn write_gemini_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand>
     let gemini_dir = cfg.working_directory.join(".gemini");
     std::fs::create_dir_all(&gemini_dir)?;
     let settings = json!({
-        "mcpServers": {
-            "agend": {
-                "command": cfg.mcp_server_binary,
-                "args": ["agend-mcp-server"],
-                "env": {
-                    "AGEND_SOCKET_PATH": cfg.socket_path.to_string_lossy(),
-                    "AGEND_INSTANCE_NAME": cfg.instance_name,
-                    "AGEND_TOOL_SET": cfg.tool_set,
-                }
-            }
-        }
+        "mcpServers": { MCP_SERVER_KEY: mcp_server_entry(cfg.mcp_server_binary, cfg.socket_path, cfg.instance_name, cfg.tool_set) }
     });
     std::fs::write(
         gemini_dir.join("settings.json"),
         serde_json::to_string_pretty(&settings).unwrap(),
     )?;
 
-    // System prompt → .gemini/GEMINI.md
-    if let Some(prompt) = cfg.system_prompt {
-        std::fs::write(gemini_dir.join("GEMINI.md"), prompt)?;
-    }
+    write_system_prompt(cfg, &gemini_dir.join("GEMINI.md"))?;
 
     // Pre-trust working directory
     pre_trust_gemini(cfg.working_directory);
@@ -215,7 +224,7 @@ pub fn write_gemini_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand>
 
     Ok(SpawnCommand {
         command: format!("gemini {}", args.join(" ")),
-        env: vec![("AGEND_INSTANCE_NAME".into(), cfg.instance_name.into())],
+        env: vec![instance_env(cfg.instance_name)],
     })
 }
 
@@ -259,17 +268,17 @@ fn pre_trust_gemini(work_dir: &Path) {
 pub fn write_opencode_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> {
     std::fs::create_dir_all(cfg.instance_dir)?;
 
-    // opencode.json in working directory
+    // OpenCode uses a different MCP format (local type, command array)
     let mut mcp = serde_json::Map::new();
     mcp.insert(
-        "agend".into(),
+        MCP_SERVER_KEY.into(),
         json!({
             "type": "local",
-            "command": [cfg.mcp_server_binary, "agend-mcp-server"],
+            "command": [cfg.mcp_server_binary, MCP_SUBCOMMAND],
             "environment": {
-                "AGEND_SOCKET_PATH": cfg.socket_path.to_string_lossy(),
-                "AGEND_INSTANCE_NAME": cfg.instance_name,
-                "AGEND_TOOL_SET": cfg.tool_set,
+                ENV_SOCKET_PATH: cfg.socket_path.to_string_lossy(),
+                ENV_INSTANCE_NAME: cfg.instance_name,
+                ENV_TOOL_SET: cfg.tool_set,
             }
         }),
     );
@@ -283,7 +292,6 @@ pub fn write_opencode_config(cfg: &BackendConfig) -> std::io::Result<SpawnComman
         serde_json::to_string_pretty(&oc_config).unwrap(),
     )?;
 
-    // System prompt
     if let Some(prompt) = cfg.system_prompt {
         std::fs::write(
             cfg.working_directory.join(".opencode-instructions.md"),
@@ -293,7 +301,7 @@ pub fn write_opencode_config(cfg: &BackendConfig) -> std::io::Result<SpawnComman
 
     Ok(SpawnCommand {
         command: "opencode".into(),
-        env: vec![("AGEND_INSTANCE_NAME".into(), cfg.instance_name.into())],
+        env: vec![instance_env(cfg.instance_name)],
     })
 }
 

@@ -5071,7 +5071,6 @@ pub(crate) fn screen_thread_main(
                 #[cfg(feature = "agend")]
                 {
                     let senders = screen.bus.senders.clone();
-                    let senders2 = senders.clone();
                     crate::agend::drain_actions(
                         |tid, bytes| {
                             let _ = senders.send_to_pty_writer(
@@ -5092,7 +5091,7 @@ pub(crate) fn screen_thread_main(
                                     let terminal_action = Some(
                                         zellij_utils::input::command::TerminalAction::RunCommand(run_cmd),
                                     );
-                                    let _ = senders2.send_to_screen(
+                                    let _ = senders.send_to_screen(
                                         ScreenInstruction::NewTab(
                                             None,               // cwd
                                             terminal_action,    // shell/command

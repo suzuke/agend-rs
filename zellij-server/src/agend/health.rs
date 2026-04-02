@@ -167,11 +167,7 @@ impl HealthChecker {
 
 /// Save a session ID for an instance (for --resume support).
 pub fn save_session_id(instance_name: &str, session_id: &str) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let path = std::path::PathBuf::from(&home)
-        .join(".agend/instances")
-        .join(instance_name)
-        .join("session-id");
+    let path = super::paths::instance_dir(instance_name).join("session-id");
     if let Err(e) = std::fs::write(&path, session_id) {
         log::warn!("agend health: failed to save session-id for {instance_name}: {e}");
     }
@@ -179,21 +175,13 @@ pub fn save_session_id(instance_name: &str, session_id: &str) {
 
 /// Clear the session ID for an instance (on crash recovery).
 pub fn clear_session_id(instance_name: &str) {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let path = std::path::PathBuf::from(&home)
-        .join(".agend/instances")
-        .join(instance_name)
-        .join("session-id");
+    let path = super::paths::instance_dir(instance_name).join("session-id");
     let _ = std::fs::remove_file(&path);
 }
 
 /// Read the session ID for an instance.
 pub fn read_session_id(instance_name: &str) -> Option<String> {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let path = std::path::PathBuf::from(&home)
-        .join(".agend/instances")
-        .join(instance_name)
-        .join("session-id");
+    let path = super::paths::instance_dir(instance_name).join("session-id");
     std::fs::read_to_string(&path)
         .ok()
         .map(|s| s.trim().to_owned())

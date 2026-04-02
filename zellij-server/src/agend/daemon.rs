@@ -29,8 +29,7 @@ pub struct Daemon {
 impl Daemon {
     /// Create and start the daemon from fleet config.
     pub fn start(config: FleetConfig) -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let db_path = PathBuf::from(&home).join(".agend").join("agend.db");
+        let db_path = super::paths::db_path();
         std::fs::create_dir_all(db_path.parent().unwrap()).ok();
 
         let db = AgendDb::open(&db_path).expect("failed to open agend database");
@@ -41,7 +40,7 @@ impl Daemon {
 
         // Start IPC servers for each instance
         let mut ipc_receivers = HashMap::new();
-        let instances_dir = PathBuf::from(&home).join(".agend").join("instances");
+        let instances_dir = super::paths::instances_base();
 
         for name in config.instances.keys() {
             let socket_path = instances_dir.join(name).join("channel.sock");
@@ -449,10 +448,7 @@ impl Daemon {
         // For start_instance, look up existing config
         if let Some(ic) = self.config.instances.get(directory) {
             let backend = ic.backend_or(&self.config.defaults);
-            let instance_dir = {
-                let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-                PathBuf::from(&home).join(".agend/instances").join(directory)
-            };
+            let instance_dir = super::paths::instance_dir(directory);
             let socket_path = instance_dir.join("channel.sock");
 
             let zellij_binary = std::env::current_exe()

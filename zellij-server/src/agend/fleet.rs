@@ -35,8 +35,7 @@ impl FleetManager {
     /// Generate a KDL layout string that creates one tab per instance,
     /// each running the backend CLI command with full config (--mcp-config, etc.).
     pub fn generate_layout(config: &FleetConfig, zellij_binary: &str) -> String {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let instances_base = PathBuf::from(&home).join(".agend").join("instances");
+        let instances_base = super::paths::instances_base();
 
         let mut kdl = String::from("layout {\n");
         for (name, ic) in &config.instances {
@@ -112,8 +111,7 @@ impl FleetManager {
     /// Write per-instance config files (mcp-config.json, instance.json).
     /// This is now called as part of generate_layout() via backend::write_config().
     pub fn write_instance_metadata(config: &FleetConfig) -> std::io::Result<()> {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-        let base = PathBuf::from(home).join(".agend").join("instances");
+        let base = super::paths::instances_base();
 
         for (name, ic) in &config.instances {
             let instance_dir = base.join(name);

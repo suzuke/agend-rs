@@ -8,6 +8,7 @@ pub mod ipc;
 pub mod lifecycle;
 pub mod mcp;
 pub mod monitor;
+pub mod paths;
 pub mod routing;
 pub mod telegram;
 #[cfg(test)]
