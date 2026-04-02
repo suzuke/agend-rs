@@ -641,16 +641,13 @@ impl Daemon {
 /// then sends a DaemonAction::Write via the global channel.
 fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
     if let Some(tid) = super::terminal_for_instance(instance_name) {
-        // Send text as bracketed paste so multi-line content isn't interpreted as keystrokes
-        let mut paste = Vec::new();
-        paste.extend_from_slice(b"\x1b[200~");
-        paste.extend_from_slice(formatted_text.as_bytes());
-        paste.extend_from_slice(b"\x1b[201~");
-        super::send_daemon_action(super::DaemonAction::Write(tid, paste));
-
-        // Submit with Enter (\r = carriage return, same as physical Enter key)
-        // Must be a separate write so CLI processes paste-end before seeing Enter
-        super::send_daemon_action(super::DaemonAction::Write(tid, b"\r".to_vec()));
+        // Type text directly into the terminal (like tmux send-keys -l).
+        // Do NOT use bracketed paste — Claude Code's TUI handles pasted
+        // text differently and may not submit on Enter after paste-end.
+        let mut bytes = Vec::with_capacity(formatted_text.len() + 1);
+        bytes.extend_from_slice(formatted_text.as_bytes());
+        bytes.push(b'\r'); // Enter to submit
+        super::send_daemon_action(super::DaemonAction::Write(tid, bytes));
 
         super::debug_log(&format!("inject: tid={} instance={} len={}", tid, instance_name, formatted_text.len()));
         log::debug!(
