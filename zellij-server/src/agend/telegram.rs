@@ -201,6 +201,17 @@ impl BotApi {
         Ok(local_path.to_string_lossy().into_owned())
     }
 
+    /// Create a forum topic in the group. Returns the topic thread_id.
+    pub fn create_forum_topic(&self, chat_id: i64, name: &str) -> Result<i64, String> {
+        let result = self.call("createForumTopic", &json!({
+            "chat_id": chat_id,
+            "name": name,
+        }))?;
+        result["message_thread_id"]
+            .as_i64()
+            .ok_or_else(|| "no message_thread_id in response".into())
+    }
+
     fn get_updates(&self, offset: i64) -> Result<Vec<Value>, String> {
         let result = self.call("getUpdates", &json!({
             "offset": offset,

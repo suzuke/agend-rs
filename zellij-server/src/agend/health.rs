@@ -134,6 +134,8 @@ impl HealthChecker {
                             "agend health: instance '{}' reached max_age ({:?}), requesting rotation",
                             name, max_age
                         );
+                        // Trigger restart: close old tab + create new one
+                        restart_instance(name);
                         let _ = HEALTH_CHANNEL.0.try_send(HealthEvent::RestartNeeded(
                             "max_age".into(),
                             name.clone(),
@@ -158,6 +160,62 @@ impl HealthChecker {
                     // Update activity time to prevent log spam
                     health.last_pty_activity = Instant::now();
                 }
+            }
+        }
+    }
+}
+
+// ── Instance restart ────────────────────────────────────────────────────
+
+/// Restart an instance: close old tab, clear session-id, create new tab.
+fn restart_instance(instance_name: &str) {
+    log::info!("agend health: restarting instance '{}'", instance_name);
+
+    // Clear session-id so next spawn starts fresh
+    clear_session_id(instance_name);
+
+    // Close old tab
+    super::send_daemon_action(super::DaemonAction::CloseTab(instance_name.to_owned()));
+
+    // Read config and create new tab
+    if let Ok(config) = super::config::FleetConfig::load_default() {
+        if let Some(ic) = config.instances.get(instance_name) {
+            let backend = ic.backend_or(&config.defaults);
+            let instance_dir = super::paths::instance_dir(instance_name);
+            let socket_path = instance_dir.join("channel.sock");
+
+            let zellij_binary = std::env::current_exe()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| "zellij".into());
+
+            let resolved_prompt = ic.resolve_system_prompt();
+            let bcfg = super::backend::BackendConfig {
+                instance_name,
+                display_name: ic.display_name.as_deref(),
+                instance_dir: &instance_dir,
+                working_directory: &ic.working_directory,
+                mcp_server_binary: &zellij_binary,
+                socket_path: &socket_path,
+                system_prompt: resolved_prompt.as_deref(),
+                skip_permissions: ic.skip_permissions,
+                model: ic.model.as_deref().or(config.defaults.model.as_deref()),
+                tool_set: "full",
+                session_id: None, // fresh start
+            };
+
+            match super::backend::write_config(backend, &bcfg) {
+                Ok(spawn) => {
+                    let parts: Vec<&str> = spawn.command.split_whitespace().collect();
+                    if !parts.is_empty() {
+                        super::send_daemon_action(super::DaemonAction::NewTab {
+                            name: instance_name.to_owned(),
+                            command: parts[0].to_owned(),
+                            args: parts[1..].iter().map(|s| s.to_string()).collect(),
+                            cwd: ic.working_directory.clone(),
+                        });
+                    }
+                },
+                Err(e) => log::error!("agend health: failed to write config for restart: {e}"),
             }
         }
     }
