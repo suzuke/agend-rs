@@ -155,23 +155,18 @@ pub fn start_monitor() {
     std::thread::Builder::new()
         .name("agend_monitor".into())
         .spawn(|| {
-            let monitor = match FleetConfig::load_default() {
-                Ok(config) => {
-                    log::info!(
-                        "agend monitor: loaded fleet config with {} instances",
-                        config.instances.len()
-                    );
-                    Monitor::with_config(&config)
-                },
-                Err(e) => {
-                    log::warn!("agend monitor: failed to load fleet config: {e}, using empty config");
-                    Monitor::new()
-                },
-            };
-            monitor.run();
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let monitor = match FleetConfig::load_default() {
+                    Ok(config) => Monitor::with_config(&config),
+                    Err(_) => Monitor::new(),
+                };
+                monitor.run();
+            }));
+            if let Err(e) = result {
+                debug_log(&format!("MONITOR PANICKED: {:?}", e));
+            }
         })
         .expect("failed to spawn agend monitor thread");
-    log::info!("agend: monitor thread started");
 
     // Start daemon (IPC servers + tool routing + Telegram)
     std::thread::Builder::new()
@@ -201,18 +196,17 @@ pub fn start_monitor() {
     std::thread::Builder::new()
         .name("agend_health".into())
         .spawn(|| {
-            match FleetConfig::load_default() {
-                Ok(config) => {
-                    let checker = health::HealthChecker::from_config(&config);
-                    checker.run(); // blocks
-                },
-                Err(e) => {
-                    log::error!("agend health: failed to load fleet config: {e}");
-                },
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                match FleetConfig::load_default() {
+                    Ok(config) => health::HealthChecker::from_config(&config).run(),
+                    Err(_) => {},
+                }
+            }));
+            if let Err(e) = result {
+                debug_log(&format!("HEALTH PANICKED: {:?}", e));
             }
         })
         .expect("failed to spawn agend health thread");
-    log::info!("agend: health checker started");
 }
 
 /// Drain pending actions (from both monitor and daemon) and write them to terminals.
