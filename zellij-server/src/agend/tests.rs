@@ -46,12 +46,14 @@ instances:
     skip_permissions: true
 "#;
         let config: FleetConfig = serde_yaml::from_str(yaml).unwrap();
-        let layout = FleetManager::generate_layout(&config);
+        let layout = FleetManager::generate_layout(&config, "/usr/bin/zellij");
 
         assert!(layout.contains("tab name=\"test-inst\""));
         assert!(layout.contains("pane command=\"claude\""));
         assert!(layout.contains("cwd=\"/tmp/test\""));
         assert!(layout.contains("--dangerously-skip-permissions"));
+        // Should now include --mcp-config flag
+        assert!(layout.contains("--mcp-config"));
     }
 
     #[test]

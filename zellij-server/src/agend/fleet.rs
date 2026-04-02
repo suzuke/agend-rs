@@ -1,5 +1,6 @@
 //! Fleet manager — generates layout and tracks instance↔terminal mappings.
 
+use super::backend::{self, BackendConfig, SpawnCommand};
 use super::config::{Defaults, FleetConfig, InstanceConfig};
 use super::mcp::generate_mcp_config;
 use std::path::PathBuf;
@@ -32,26 +33,74 @@ impl FleetManager {
     }
 
     /// Generate a KDL layout string that creates one tab per instance,
-    /// each running the backend CLI command.
-    pub fn generate_layout(config: &FleetConfig) -> String {
+    /// each running the backend CLI command with full config (--mcp-config, etc.).
+    pub fn generate_layout(config: &FleetConfig, zellij_binary: &str) -> String {
+        let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+        let instances_base = PathBuf::from(&home).join(".agend").join("instances");
+
         let mut kdl = String::from("layout {\n");
         for (name, ic) in &config.instances {
             let backend = ic.backend_or(&config.defaults);
-            let (cmd, args) = build_command(backend, ic, &config.defaults);
+            let instance_dir = instances_base.join(name);
+            let socket_path = instance_dir.join("channel.sock");
+
+            // Use backend config writer to get the full command
+            let bcfg = BackendConfig {
+                instance_name: name,
+                instance_dir: &instance_dir,
+                working_directory: &ic.working_directory,
+                mcp_server_binary: zellij_binary,
+                socket_path: &socket_path,
+                system_prompt: None, // TODO: from config
+                skip_permissions: ic.skip_permissions,
+                model: ic.model.as_deref().or(config.defaults.model.as_deref()),
+                tool_set: "full",
+                session_id: read_session_id(&instance_dir),
+            };
+
+            let spawn = match backend::write_config(backend, &bcfg) {
+                Ok(s) => s,
+                Err(e) => {
+                    log::error!("agend: failed to write config for '{name}': {e}");
+                    // Fallback to simple command
+                    SpawnCommand {
+                        command: format!("{backend}"),
+                        env: vec![],
+                    }
+                },
+            };
+
+            // Parse command into (binary, args)
+            let (cmd_binary, cmd_args) = parse_command(&spawn.command);
             let cwd = ic.working_directory.display();
 
+            // Build env string for KDL
+            let mut env_parts: Vec<String> = spawn
+                .env
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect();
+            // Always set TERM
+            env_parts.insert(0, "TERM=xterm-256color".into());
+
             kdl.push_str(&format!("    tab name=\"{name}\" {{\n"));
-            kdl.push_str(&format!("        pane command=\"{cmd}\" cwd=\"{cwd}\" name=\"{name}\""));
-            if args.is_empty() {
-                kdl.push_str("\n");
+
+            if cmd_args.is_empty() && env_parts.is_empty() {
+                kdl.push_str(&format!(
+                    "        pane command=\"{cmd_binary}\" cwd=\"{cwd}\" name=\"{name}\"\n"
+                ));
             } else {
-                kdl.push_str(" {\n");
-                let args_str = args
-                    .iter()
-                    .map(|a| format!("\"{}\"", a.replace('"', "\\\"")))
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                kdl.push_str(&format!("            args {args_str}\n"));
+                kdl.push_str(&format!(
+                    "        pane command=\"{cmd_binary}\" cwd=\"{cwd}\" name=\"{name}\" {{\n"
+                ));
+                if !cmd_args.is_empty() {
+                    let args_str = cmd_args
+                        .iter()
+                        .map(|a| format!("\"{}\"", a.replace('"', "\\\"")))
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    kdl.push_str(&format!("            args {args_str}\n"));
+                }
                 kdl.push_str("        }\n");
             }
             kdl.push_str("    }\n");
@@ -60,12 +109,9 @@ impl FleetManager {
         kdl
     }
 
-    /// Write per-instance config files (mcp-config.json, etc.) to the agend
-    /// instance directories. Returns the instance dir base path.
-    pub fn write_instance_configs(
-        config: &FleetConfig,
-        zellij_binary: &str,
-    ) -> std::io::Result<PathBuf> {
+    /// Write per-instance config files (mcp-config.json, instance.json).
+    /// This is now called as part of generate_layout() via backend::write_config().
+    pub fn write_instance_metadata(config: &FleetConfig) -> std::io::Result<()> {
         let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
         let base = PathBuf::from(home).join(".agend").join("instances");
 
@@ -73,21 +119,6 @@ impl FleetManager {
             let instance_dir = base.join(name);
             std::fs::create_dir_all(&instance_dir)?;
 
-            // Write mcp-config.json
-            let socket_path = instance_dir.join("channel.sock");
-            let tool_set = "full"; // TODO: per-instance tool_set config
-            let mcp_config = generate_mcp_config(
-                zellij_binary,
-                &socket_path.to_string_lossy(),
-                tool_set,
-            );
-            let mcp_config_path = instance_dir.join("mcp-config.json");
-            std::fs::write(
-                &mcp_config_path,
-                serde_json::to_string_pretty(&mcp_config).unwrap(),
-            )?;
-
-            // Write instance metadata
             let meta = serde_json::json!({
                 "name": name,
                 "backend": ic.backend_or(&config.defaults),
@@ -100,53 +131,27 @@ impl FleetManager {
                 serde_json::to_string_pretty(&meta).unwrap(),
             )?;
         }
-        Ok(base)
+        Ok(())
     }
 }
 
-/// Build the CLI command + args for a backend.
-fn build_command(
-    backend: &str,
-    instance: &InstanceConfig,
-    defaults: &Defaults,
-) -> (String, Vec<String>) {
-    let model = instance
-        .model
-        .as_deref()
-        .or(defaults.model.as_deref());
-
-    match backend {
-        "claude-code" => {
-            let mut args = Vec::new();
-            if instance.skip_permissions {
-                args.push("--dangerously-skip-permissions".into());
-            }
-            if let Some(m) = model {
-                args.push("--model".into());
-                args.push(m.into());
-            }
-            ("claude".into(), args)
-        },
-        "codex" => {
-            let mut args = Vec::new();
-            if let Some(m) = model {
-                args.push("--model".into());
-                args.push(m.into());
-            }
-            ("codex".into(), args)
-        },
-        "gemini-cli" => {
-            let mut args = Vec::new();
-            if let Some(m) = model {
-                args.push("--model".into());
-                args.push(m.into());
-            }
-            ("gemini".into(), args)
-        },
-        "opencode" => ("opencode".into(), vec![]),
-        other => {
-            // Treat as raw command
-            (other.into(), vec![])
-        },
+/// Parse a shell command string into (binary, args).
+/// Handles simple quoting.
+fn parse_command(cmd: &str) -> (String, Vec<String>) {
+    let parts: Vec<&str> = cmd.split_whitespace().collect();
+    if parts.is_empty() {
+        return (String::new(), vec![]);
     }
+    let binary = parts[0].to_owned();
+    let args: Vec<String> = parts[1..].iter().map(|s| s.to_string()).collect();
+    (binary, args)
+}
+
+/// Read saved session ID for resume support.
+fn read_session_id(instance_dir: &PathBuf) -> Option<String> {
+    let path = instance_dir.join("session-id");
+    std::fs::read_to_string(&path)
+        .ok()
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
 }

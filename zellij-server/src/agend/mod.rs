@@ -19,6 +19,7 @@ use monitor::{Monitor, MonitorAction, PtyEvent};
 use std::path::PathBuf;
 
 /// Generate a KDL layout string from fleet.yaml config.
+/// Also writes per-instance config files (mcp-config.json, backend configs).
 /// Called from main.rs to inject into the Zellij startup.
 pub fn generate_layout_from_config(config_dir: Option<&str>) -> Result<String, String> {
     let config = match config_dir {
@@ -31,15 +32,17 @@ pub fn generate_layout_from_config(config_dir: Option<&str>) -> Result<String, S
         return Err("No instances defined in fleet.yaml".into());
     }
 
-    // Write per-instance config files (mcp-config.json, instance.json)
     let zellij_binary = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "zellij".into());
-    if let Err(e) = FleetManager::write_instance_configs(&config, &zellij_binary) {
-        log::warn!("agend: failed to write instance configs: {e}");
+
+    // Write instance metadata
+    if let Err(e) = FleetManager::write_instance_metadata(&config) {
+        log::warn!("agend: failed to write instance metadata: {e}");
     }
 
-    let layout = FleetManager::generate_layout(&config);
+    // Generate layout (this also writes backend configs via backend::write_config)
+    let layout = FleetManager::generate_layout(&config, &zellij_binary);
     log::info!("agend: generated layout for {} instances", config.instances.len());
     log::debug!("agend: layout:\n{layout}");
     Ok(layout)
@@ -65,10 +68,10 @@ pub fn on_new_pane(pid: PaneId, pane_name: Option<&str>) {
     }
 }
 
-/// Start the agend monitor thread.
+/// Start the agend monitor thread AND the daemon (IPC servers + tool routing).
 /// Called during server session init (hook #3).
 pub fn start_monitor() {
-    // Load fleet config in the monitor thread for instance→backend mapping
+    // Start PTY monitor thread
     std::thread::Builder::new()
         .name("agend_monitor".into())
         .spawn(|| {
@@ -89,6 +92,24 @@ pub fn start_monitor() {
         })
         .expect("failed to spawn agend monitor thread");
     log::info!("agend: monitor thread started");
+
+    // Start daemon (IPC servers + tool routing + Telegram)
+    std::thread::Builder::new()
+        .name("agend_daemon".into())
+        .spawn(|| {
+            match FleetConfig::load_default() {
+                Ok(config) => {
+                    log::info!("agend daemon: starting with {} instances", config.instances.len());
+                    let daemon = daemon::Daemon::start(config);
+                    daemon.run(); // blocks
+                },
+                Err(e) => {
+                    log::error!("agend daemon: failed to load fleet config: {e}");
+                },
+            }
+        })
+        .expect("failed to spawn agend daemon thread");
+    log::info!("agend: daemon thread started");
 }
 
 /// Drain pending monitor actions and write them to terminals.
