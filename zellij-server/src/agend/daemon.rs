@@ -488,6 +488,7 @@ impl Daemon {
 
             let bcfg = super::backend::BackendConfig {
                 instance_name: directory,
+                display_name: ic.display_name.as_deref(),
                 instance_dir: &instance_dir,
                 working_directory: &ic.working_directory,
                 mcp_server_binary: &zellij_binary,

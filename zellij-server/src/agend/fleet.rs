@@ -47,6 +47,7 @@ impl FleetManager {
             let resolved_prompt = ic.resolve_system_prompt();
             let bcfg = BackendConfig {
                 instance_name: name,
+                display_name: ic.display_name.as_deref(),
                 instance_dir: &instance_dir,
                 working_directory: &ic.working_directory,
                 mcp_server_binary: zellij_binary,

@@ -10,6 +10,7 @@ pub mod mcp;
 pub mod monitor;
 pub mod paths;
 pub mod routing;
+pub mod scheduler;
 pub mod telegram;
 #[cfg(test)]
 mod tests;
@@ -207,6 +208,19 @@ pub fn start_monitor() {
             }
         })
         .expect("failed to spawn agend health thread");
+
+    // Start cron scheduler
+    std::thread::Builder::new()
+        .name("agend_scheduler".into())
+        .spawn(|| {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                scheduler::run_scheduler();
+            }));
+            if let Err(e) = result {
+                debug_log(&format!("SCHEDULER PANICKED: {:?}", e));
+            }
+        })
+        .expect("failed to spawn agend scheduler thread");
 }
 
 /// Drain pending actions (from both monitor and daemon) and write them to terminals.
