@@ -336,10 +336,12 @@ impl Daemon {
             });
 
         // Inject message directly into the target pane's PTY stdin
-        let request_kind = args.get("request_kind").and_then(|v| v.as_str()).unwrap_or("update");
+        let sender_display = self.config.instances.get(sender)
+            .map(|ic| ic.display_name_or(sender))
+            .unwrap_or(sender);
         let formatted = format!(
             "[from:{}] {}\n(Reply using send_to_instance tool, NOT direct text)\n",
-            sender, message
+            sender_display, message
         );
         inject_message_to_instance(target, &formatted);
 
@@ -422,6 +424,7 @@ impl Daemon {
             .map(|(name, ic)| {
                 json!({
                     "name": name,
+                    "display_name": ic.display_name_or(name),
                     "backend": ic.backend_or(&self.config.defaults),
                     "working_directory": ic.working_directory.display().to_string(),
                     "description": ic.description,
@@ -438,6 +441,7 @@ impl Daemon {
         match self.config.instances.get(name) {
             Some(ic) => Ok(json!({
                 "name": name,
+                "display_name": ic.display_name_or(name),
                 "backend": ic.backend_or(&self.config.defaults),
                 "working_directory": ic.working_directory.display().to_string(),
                 "description": ic.description,

@@ -44,13 +44,14 @@ impl FleetManager {
             let socket_path = instance_dir.join("channel.sock");
 
             // Use backend config writer to get the full command
+            let resolved_prompt = ic.resolve_system_prompt();
             let bcfg = BackendConfig {
                 instance_name: name,
                 instance_dir: &instance_dir,
                 working_directory: &ic.working_directory,
                 mcp_server_binary: zellij_binary,
                 socket_path: &socket_path,
-                system_prompt: None, // TODO: from config
+                system_prompt: resolved_prompt.as_deref(),
                 skip_permissions: ic.skip_permissions,
                 model: ic.model.as_deref().or(config.defaults.model.as_deref()),
                 tool_set: "full",

@@ -100,6 +100,9 @@ pub struct InstanceConfig {
     #[serde(default)]
     pub general_topic: bool,
     pub context_guardian: Option<ContextGuardianConfig>,
+    pub display_name: Option<String>,
+    /// System prompt: inline string or "file:path/to/prompt.md" reference.
+    pub system_prompt: Option<String>,
 }
 
 impl InstanceConfig {
@@ -107,6 +110,28 @@ impl InstanceConfig {
     pub fn backend_or<'a>(&'a self, defaults: &'a Defaults) -> &'a str {
         self.backend.as_deref().unwrap_or(&defaults.backend)
     }
+
+    /// Resolve the system prompt. If it starts with "file:", read from that path.
+    pub fn resolve_system_prompt(&self) -> Option<String> {
+        let raw = self.system_prompt.as_deref()?;
+        if let Some(path) = raw.strip_prefix("file:") {
+            match std::fs::read_to_string(path.trim()) {
+                Ok(content) => Some(content),
+                Err(e) => {
+                    log::warn!("agend config: failed to read system prompt from {}: {e}", path);
+                    None
+                },
+            }
+        } else {
+            Some(raw.to_owned())
+        }
+    }
+
+    /// Display name, falling back to instance name.
+    pub fn display_name_or<'a>(&'a self, instance_name: &'a str) -> &'a str {
+        self.display_name.as_deref().unwrap_or(instance_name)
+    }
+
     pub fn max_age_hours(&self) -> Option<u32> {
         self.context_guardian.as_ref().map(|c| c.max_age_hours)
     }
