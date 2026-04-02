@@ -52,12 +52,24 @@ impl Daemon {
         }
 
         // Start Telegram adapter if configured
-        super::debug_log("daemon: about to init Telegram adapter");
-        let telegram = TelegramAdapter::from_config(&config).map(|adapter| {
-            super::debug_log("daemon: Telegram adapter created, starting...");
-            adapter.run()
-        });
-        super::debug_log(&format!("daemon: Telegram adapter: {}", if telegram.is_some() { "started" } else { "not configured" }));
+        // Defer Telegram start — spawn after a delay so Zellij session can fully init
+        let telegram_config = config.clone();
+        let telegram: Option<TelegramSender> = None;
+        std::thread::Builder::new()
+            .name("agend_telegram_init".into())
+            .spawn(move || {
+                // Wait for Zellij to finish session setup
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                super::debug_log("daemon: deferred Telegram init starting...");
+                if let Some(adapter) = TelegramAdapter::from_config(&telegram_config) {
+                    let _sender = adapter.run();
+                    super::debug_log("daemon: Telegram adapter started (deferred)");
+                    // Keep thread alive so adapter doesn't drop
+                    loop { std::thread::sleep(std::time::Duration::from_secs(3600)); }
+                }
+            })
+            .ok();
+        super::debug_log("daemon: Telegram deferred init scheduled");
 
         Self {
             config,
