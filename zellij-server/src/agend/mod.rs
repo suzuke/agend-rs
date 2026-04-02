@@ -1,5 +1,8 @@
 pub mod config;
+pub mod daemon;
+pub mod db;
 pub mod fleet;
+pub mod ipc;
 pub mod mcp;
 pub mod monitor;
 pub mod routing;

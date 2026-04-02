@@ -75,11 +75,16 @@ wasmi = { version = "0.51.3", features = ["std"] }
 
 [features]
 web_server_capability = ["zellij-utils/web_server_capability"]
-agend = ["serde_yaml", "teloxide"]
+agend = ["serde_yaml", "teloxide", "rusqlite"]
 
 [dependencies.serde_yaml]
 version = "0.9"
 optional = true
+
+[dependencies.rusqlite]
+version = "0.30"
+optional = true
+features = ["bundled"]
 
 [dependencies.teloxide]
 version = "0.13"
