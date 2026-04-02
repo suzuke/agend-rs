@@ -149,4 +149,27 @@ instances:
         assert!(actions.is_empty());
         assert!(!monitor.terminals.contains_key(&99));
     }
+
+    #[test]
+    fn monitor_detects_dialog_with_ansi_codes() {
+        let mut monitor = Monitor::new();
+        monitor.register(1, "test".into(), "claude-code".into());
+
+        // Simulate raw PTY output with ANSI escape codes
+        let ansi_dialog = b"\x1b[32m\xe2\x9d\xaf\x1b[0m 1. Yes, \x1b[1mI trust\x1b[0m this folder\n  2. No, exit";
+        let actions = monitor.process(PtyEvent::Bytes(1, ansi_dialog.to_vec()));
+        assert!(!actions.is_empty(), "Should detect dialog through ANSI codes");
+    }
+
+    #[test]
+    fn monitor_detects_ready_with_ansi_codes() {
+        let mut monitor = Monitor::new();
+        monitor.register(1, "test".into(), "claude-code".into());
+
+        // Claude Code prompt with ANSI color codes
+        let ansi_prompt = "\x1b[32m❯\x1b[0m ".as_bytes();
+        let actions = monitor.process(PtyEvent::Bytes(1, ansi_prompt.to_vec()));
+        assert!(actions.is_empty());
+        assert!(monitor.terminals.get(&1).unwrap().ready);
+    }
 }

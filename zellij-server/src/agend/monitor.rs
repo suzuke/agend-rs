@@ -135,8 +135,19 @@ impl TerminalState {
     }
 
     fn text(&self) -> String {
-        String::from_utf8_lossy(&self.buf).into_owned()
+        strip_ansi(&String::from_utf8_lossy(&self.buf))
     }
+}
+
+/// Strip ANSI escape sequences from text so pattern matching works on clean text.
+/// Raw PTY output contains color codes, cursor movements, etc. that break regex.
+fn strip_ansi(s: &str) -> String {
+    // Matches: ESC[ ... final_byte, ESC] ... ST, ESC(X, and other common sequences
+    static ANSI_RE: Lazy<Regex> = Lazy::new(|| {
+        Regex::new(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-B012]|\x1b[>=]|\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]")
+            .unwrap()
+    });
+    ANSI_RE.replace_all(s, "").into_owned()
 }
 
 // ── Monitor thread ──────────────────────────────────────────────────────
