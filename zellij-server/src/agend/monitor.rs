@@ -231,17 +231,15 @@ impl Monitor {
                     state.append(&bytes);
                     let text = state.text();
 
-                    // Debug: always log first few, then log when content exists
+                    // Debug: log text content (take last 200 chars safely)
                     {
                         static TEXT_LOG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
                         let n = TEXT_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         if n < 5 || (text.trim().len() > 5 && n < 20) {
-                            // Safe tail: find a char boundary
-                            let tail_start = text.len().saturating_sub(200);
-                            let safe_start = text.ceil_char_boundary(tail_start);
+                            let tail: String = text.chars().rev().take(200).collect::<Vec<_>>().into_iter().rev().collect();
                             super::debug_log(&format!(
-                                "monitor: tid={} raw_len={} stripped_len={} text_tail: {:?}",
-                                tid, state.buf.len(), text.len(), &text[safe_start..]
+                                "monitor: tid={} raw={} stripped={} tail: {:?}",
+                                tid, state.buf.len(), text.len(), tail
                             ));
                         }
                     }
