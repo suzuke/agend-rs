@@ -52,10 +52,12 @@ impl Daemon {
         }
 
         // Start Telegram adapter if configured
+        super::debug_log("daemon: about to init Telegram adapter");
         let telegram = TelegramAdapter::from_config(&config).map(|adapter| {
-            log::info!("agend daemon: starting Telegram adapter");
+            super::debug_log("daemon: Telegram adapter created, starting...");
             adapter.run()
         });
+        super::debug_log(&format!("daemon: Telegram adapter result: {}", telegram.is_some()));
 
         Self {
             config,

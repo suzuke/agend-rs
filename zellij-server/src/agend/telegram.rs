@@ -152,13 +152,18 @@ impl TelegramAdapter {
         std::thread::Builder::new()
             .name("agend_telegram".into())
             .spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                    .expect("failed to build tokio runtime for telegram");
-                rt.block_on(async {
-                    run_bot(self, receiver).await;
-                });
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("failed to build tokio runtime for telegram");
+                    rt.block_on(async {
+                        run_bot(self, receiver).await;
+                    });
+                }));
+                if let Err(e) = result {
+                    log::error!("agend telegram: thread panicked: {:?}", e);
+                }
             })
             .expect("failed to spawn telegram thread");
 
