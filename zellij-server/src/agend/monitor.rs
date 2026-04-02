@@ -247,8 +247,9 @@ impl Monitor {
                     // 1. Check for dialog BEFORE ready (dialog can look like ready)
                     if DIALOG_PATTERN.is_match(&text) && state.dialog_attempts < 5 {
                         state.dialog_attempts += 1;
+                        let preview: String = text.chars().take(200).collect();
                         super::debug_log(&format!("DIALOG DETECTED for '{}' (attempt {}), text: {}",
-                            state.instance_name, state.dialog_attempts, &text[..text.len().min(200)]));
+                            state.instance_name, state.dialog_attempts, preview));
 
                         if DIALOG_NO_SELECTED.is_match(&text) {
                             // Navigate down to "Yes" option, then Enter
