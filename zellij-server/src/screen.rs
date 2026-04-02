@@ -5145,6 +5145,21 @@ pub(crate) fn screen_thread_main(
                 screen.render(None)?;
             },
             ScreenInstruction::RenderToClients => {
+                // AgEnD hook: also drain actions on render (not just PtyBytes)
+                // so dialog dismissal and message injection don't wait for next byte event
+                #[cfg(feature = "agend")]
+                {
+                    let senders = screen.bus.senders.clone();
+                    crate::agend::drain_actions(
+                        |tid, bytes| {
+                            let _ = senders.send_to_pty_writer(
+                                crate::pty_writer::PtyWriteInstruction::Write(bytes, tid, None),
+                            );
+                        },
+                        |_action| {}, // tab ops only handled in PtyBytes path
+                    );
+                }
+
                 // render_blocker.can_render() returning true means that either all pending plugins
                 // (only those waiting for a new tab layout to be applied!) have been rendered or
                 // that a 100ms timeout has been reached (more info in the RenderBlocker comment)

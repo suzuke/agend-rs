@@ -641,16 +641,15 @@ impl Daemon {
 /// then sends a DaemonAction::Write via the global channel.
 fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
     if let Some(tid) = super::terminal_for_instance(instance_name) {
-        // Use Zellij's "bracketed paste" to inject text cleanly
-        // This wraps the text in paste start/end sequences so the CLI
-        // treats it as pasted input rather than typed characters.
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(b"\x1b[200~"); // Bracketed paste start
-        bytes.extend_from_slice(formatted_text.as_bytes());
-        bytes.extend_from_slice(b"\x1b[201~"); // Bracketed paste end
-        bytes.extend_from_slice(b"\r"); // Enter to submit
+        // Bracketed paste: wrap text so CLI treats it as pasted input
+        let mut paste = Vec::new();
+        paste.extend_from_slice(b"\x1b[200~");
+        paste.extend_from_slice(formatted_text.as_bytes());
+        paste.extend_from_slice(b"\x1b[201~");
+        super::send_daemon_action(super::DaemonAction::Write(tid, paste));
 
-        super::send_daemon_action(super::DaemonAction::Write(tid, bytes));
+        // Enter must be a separate write so the CLI processes the paste first
+        super::send_daemon_action(super::DaemonAction::Write(tid, b"\r".to_vec()));
         log::debug!(
             "agend daemon: injected {} bytes into terminal {} (instance '{}')",
             formatted_text.len(), tid, instance_name
