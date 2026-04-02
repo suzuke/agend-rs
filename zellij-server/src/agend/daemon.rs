@@ -57,7 +57,7 @@ impl Daemon {
             super::debug_log("daemon: Telegram adapter created, starting...");
             adapter.run()
         });
-        super::debug_log(&format!("daemon: Telegram adapter result: {}", telegram.is_some()));
+        super::debug_log(&format!("daemon: Telegram adapter: {}", if telegram.is_some() { "started" } else { "not configured" }));
 
         Self {
             config,
@@ -75,6 +75,8 @@ impl Daemon {
             self.ipc_receivers.len()
         );
 
+        super::debug_log(&format!("daemon: run() starting select loop with {} IPC receivers", self.ipc_receivers.len()));
+
         // Merge all IPC receivers into a single select loop
         let mut sel = crossbeam::channel::Select::new();
         let names: Vec<String> = self.ipc_receivers.keys().cloned().collect();
@@ -91,6 +93,7 @@ impl Daemon {
             sel.recv(rx);
         }
 
+        super::debug_log("daemon: entering select loop");
         loop {
             let oper = sel.select();
             let index = oper.index();

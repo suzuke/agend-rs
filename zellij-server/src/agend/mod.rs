@@ -177,15 +177,21 @@ pub fn start_monitor() {
     std::thread::Builder::new()
         .name("agend_daemon".into())
         .spawn(|| {
-            match FleetConfig::load_default() {
-                Ok(config) => {
-                    log::info!("agend daemon: starting with {} instances", config.instances.len());
-                    let daemon = daemon::Daemon::start(config);
-                    daemon.run(); // blocks
-                },
-                Err(e) => {
-                    log::error!("agend daemon: failed to load fleet config: {e}");
-                },
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                match FleetConfig::load_default() {
+                    Ok(config) => {
+                        log::info!("agend daemon: starting with {} instances", config.instances.len());
+                        let daemon = daemon::Daemon::start(config);
+                        daemon.run(); // blocks
+                    },
+                    Err(e) => {
+                        log::error!("agend daemon: failed to load fleet config: {e}");
+                    },
+                }
+            }));
+            if let Err(e) = result {
+                debug_log(&format!("DAEMON PANICKED: {:?}", e));
+                log::error!("agend daemon: thread panicked: {:?}", e);
             }
         })
         .expect("failed to spawn agend daemon thread");
