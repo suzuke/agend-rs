@@ -66,6 +66,17 @@ impl RoutingEngine {
         self.table.get(thread_id).map(|t| t.name.as_str())
     }
 
+    /// Register a single topic → instance mapping at runtime.
+    pub fn register(&mut self, thread_id: i64, name: String) {
+        self.table.insert(
+            thread_id.to_string(),
+            RouteTarget {
+                kind: RouteKind::Instance,
+                name,
+            },
+        );
+    }
+
     /// Get the general/dispatcher instance (if any).
     pub fn general_instance(&self) -> Option<&str> {
         self.table

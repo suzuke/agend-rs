@@ -222,6 +222,20 @@ impl BotApi {
     }
 }
 
+// ── Standalone topic creation ────────────────────────────────────────────
+
+/// Create a Telegram forum topic without needing a full adapter.
+/// Uses the bot token from the fleet config.
+pub fn create_topic(config: &FleetConfig, name: &str) -> Result<i64, String> {
+    let channel = config.channel.as_ref().ok_or("no channel configured")?;
+    let bot_token_env = channel.bot_token_env.as_deref().unwrap_or("AGEND_BOT_TOKEN");
+    let bot_token = std::env::var(bot_token_env)
+        .map_err(|_| format!("env var {bot_token_env} not set"))?;
+    let group_id = channel.group_id.ok_or("no group_id configured")?;
+    let bot = BotApi::new(&bot_token);
+    bot.create_forum_topic(group_id, name)
+}
+
 // ── Adapter ─────────────────────────────────────────────────────────────
 
 pub struct TelegramAdapter {
@@ -232,7 +246,10 @@ pub struct TelegramAdapter {
 }
 
 impl TelegramAdapter {
-    pub fn from_config(config: &FleetConfig) -> Option<Self> {
+    pub fn from_config(
+        config: &FleetConfig,
+        routing: Arc<std::sync::RwLock<RoutingEngine>>,
+    ) -> Option<Self> {
         let channel = config.channel.as_ref()?;
         if channel.channel_type != "telegram" {
             return None;
@@ -248,14 +265,11 @@ impl TelegramAdapter {
             .map(|a| a.allowed_users.iter().copied().collect())
             .unwrap_or_default();
 
-        let mut routing = RoutingEngine::new();
-        routing.rebuild(config);
-
         Some(Self {
             bot_token,
             group_id,
             allowed_users,
-            routing: Arc::new(std::sync::RwLock::new(routing)),
+            routing,
         })
     }
 

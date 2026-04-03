@@ -63,17 +63,19 @@ impl Daemon {
             ipc_receivers.insert(name.clone(), rx);
         }
 
-        // Start Telegram adapter if configured
+        let routing = Arc::new(RwLock::new(routing));
+
         // Start Telegram adapter if configured (uses plain HTTP, no tokio)
-        let telegram = TelegramAdapter::from_config(&config).map(|adapter| {
-            log::info!("agend daemon: starting Telegram adapter");
-            adapter.run()
-        });
+        let telegram = TelegramAdapter::from_config(&config, Arc::clone(&routing))
+            .map(|adapter| {
+                log::info!("agend daemon: starting Telegram adapter");
+                adapter.run()
+            });
 
         Self {
             config,
             db,
-            routing: Arc::new(RwLock::new(routing)),
+            routing,
             runtime_instances: Arc::new(RwLock::new(HashMap::new())),
             ipc_receivers,
             telegram,
@@ -618,8 +620,25 @@ impl Daemon {
                 });
             }
 
+            // Create Telegram forum topic and register in routing
+            let mut topic_id: Option<i64> = None;
+            if self.telegram.is_some() {
+                match super::telegram::create_topic(&self.config, name) {
+                    Ok(tid) => {
+                        if let Ok(mut r) = self.routing.write() {
+                            r.register(tid, name.to_owned());
+                        }
+                        topic_id = Some(tid);
+                        log::info!("agend daemon: created Telegram topic {tid} for '{name}'");
+                    },
+                    Err(e) => {
+                        log::warn!("agend daemon: failed to create Telegram topic for '{name}': {e}");
+                    },
+                }
+            }
+
             log::info!("agend daemon: creating instance '{name}' at {dir}");
-            Ok(json!({"created": true, "name": name, "directory": dir}))
+            Ok(json!({"created": true, "name": name, "directory": dir, "topic_id": topic_id}))
         }
     }
 
