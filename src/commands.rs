@@ -661,7 +661,7 @@ fn attach_with_session_name(
     }
 }
 
-pub(crate) fn start_client(opts: CliArgs) {
+pub(crate) fn start_client(opts: CliArgs, detached: bool) {
     // look for old YAML config/layout/theme files and convert them to KDL
     convert_old_yaml_files(&opts);
     let (
@@ -691,7 +691,7 @@ pub(crate) fn start_client(opts: CliArgs) {
         let mut config_options = config_options.clone();
         let mut opts = opts.clone();
         let mut is_a_reconnect = false;
-        let mut should_create_detached = false;
+        let mut should_create_detached = detached;
         let mut layout_info = client_layout_info.clone();
         let mut new_session_cwd = None;
 

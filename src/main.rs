@@ -20,18 +20,22 @@ fn main() {
     let opts = CliArgs::parse();
 
     // AgEnD hook: intercept `zellij agend` subcommand
-    if let Some(Command::Agend) = &opts.command {
+    if let Some(Command::Agend { daemon }) = &opts.command {
         #[cfg(feature = "agend")]
         {
+            let daemon = *daemon;
             // Load fleet.yaml → generate layout → start Zellij with that layout
             match zellij_server::agend::generate_layout_from_config(None) {
                 Ok(layout) => {
                     let mut opts = opts.clone();
                     opts.command = None;
                     opts.layout_string = Some(layout);
+                    if opts.session.is_none() {
+                        opts.session = Some("agend".to_string());
+                    }
                     // Set env var so server-side hooks know to enable monitoring
                     std::env::set_var("AGEND_MODE", "1");
-                    commands::start_client(opts);
+                    commands::start_client(opts, daemon);
                 },
                 Err(e) => {
                     eprintln!("agend: {e}");
@@ -329,13 +333,13 @@ fn main() {
             };
             commands::send_action_to_session(new_layout_cli_action, Some(session_name), config);
         } else {
-            commands::start_client(opts);
+            commands::start_client(opts, false);
         }
     } else if let Some(layout_for_new_session) = &opts.new_session_with_layout {
         let mut opts = opts.clone();
         opts.new_session_with_layout = None;
         opts.layout = Some(layout_for_new_session.clone());
-        commands::start_client(opts);
+        commands::start_client(opts, false);
     } else if let Some(Command::Web(web_opts)) = &opts.command {
         if web_opts.get_start() {
             let daemonize = web_opts.daemonize;
@@ -454,6 +458,6 @@ fn main() {
             }
         }
     } else {
-        commands::start_client(opts);
+        commands::start_client(opts, false);
     }
 }

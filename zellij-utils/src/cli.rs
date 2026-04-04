@@ -134,7 +134,11 @@ pub enum Command {
 
     /// Start the AgEnD fleet manager (requires --features agend)
     #[clap(name = "agend")]
-    Agend,
+    Agend {
+        /// Run as a background daemon (detached session, no TTY required)
+        #[clap(long)]
+        daemon: bool,
+    },
 
     /// Run the AgEnD MCP server (internal, launched by CLI agents)
     #[clap(name = "agend-mcp-server", hide = true)]
