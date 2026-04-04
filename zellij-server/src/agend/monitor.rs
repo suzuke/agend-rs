@@ -69,7 +69,8 @@ fn backend_patterns() -> Vec<BackendPatterns> {
         },
         BackendPatterns {
             name: "opencode",
-            ready: Regex::new(r"Ask\s*anything|ctrl\+p\s*commands").unwrap(),
+            // Shell prompt (opencode runs in a shell pane, not TUI mode)
+            ready: Regex::new(r"Ask\s*anything|ctrl\+p\s*commands|[%$#>]\s*$").unwrap(),
         },
     ]
 }

@@ -939,20 +939,73 @@ impl Daemon {
 /// Inject a formatted message into an instance's terminal pane.
 /// Uses the global terminal registry to find the terminal_id,
 /// then sends a DaemonAction::Write via the global channel.
+///
+/// For OpenCode instances (detected by opencode-binary marker file),
+/// wraps the message as an `opencode run --continue` command instead
+/// of injecting raw text, since OpenCode's TUI doesn't accept raw input
+/// in daemon mode.
 fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
     if let Some(tid) = super::terminal_for_instance(instance_name) {
-        // Type text directly into the terminal (like tmux send-keys -l).
-        // Do NOT use bracketed paste — Claude Code's TUI handles pasted
-        // text differently and may not submit on Enter after paste-end.
-        let mut bytes = Vec::with_capacity(formatted_text.len() + 1);
-        bytes.extend_from_slice(formatted_text.as_bytes());
+        let instance_dir = super::paths::instance_dir(instance_name);
+        let oc_binary_path = instance_dir.join("opencode-binary");
+
+        let inject_text = if oc_binary_path.exists() {
+            // OpenCode instance: spawn `opencode run --continue` as a subprocess
+            // directly from the daemon, bypassing terminal injection entirely.
+            // This is more reliable than injecting commands into the pane shell.
+            let oc_binary = std::fs::read_to_string(&oc_binary_path)
+                .unwrap_or_else(|_| "opencode".into())
+                .trim()
+                .to_owned();
+            // Resolve working directory from instance config
+            let work_dir = instance_dir.join("..").join(".."); // fallback
+            // Read working directory from instance.json if available
+            let work_dir = std::fs::read_to_string(instance_dir.join("instance.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v["working_directory"].as_str().map(|s| std::path::PathBuf::from(s)))
+                .unwrap_or(work_dir);
+
+            let msg = formatted_text.to_owned();
+            let name = instance_name.to_owned();
+            std::thread::Builder::new()
+                .name(format!("oc_run_{name}"))
+                .spawn(move || {
+                    log::info!("agend: spawning opencode run for '{name}'");
+                    match std::process::Command::new(&oc_binary)
+                        .args(["run", "--continue", &msg])
+                        .current_dir(&work_dir)
+                        .env("PATH", format!("{}:{}",
+                            std::path::Path::new(&oc_binary).parent().unwrap_or(std::path::Path::new("")).display(),
+                            std::env::var("PATH").unwrap_or_default()))
+                        .output()
+                    {
+                        Ok(output) => {
+                            if !output.status.success() {
+                                let stderr = String::from_utf8_lossy(&output.stderr);
+                                log::error!("agend: opencode run failed for '{name}': {stderr}");
+                            } else {
+                                log::info!("agend: opencode run completed for '{name}'");
+                            }
+                        },
+                        Err(e) => log::error!("agend: failed to spawn opencode for '{name}': {e}"),
+                    }
+                })
+                .ok();
+            return; // Don't inject into terminal
+        } else {
+            // Other backends (Claude Code, etc.): inject raw text
+            formatted_text.to_owned()
+        };
+
+        let mut bytes = Vec::with_capacity(inject_text.len() + 1);
+        bytes.extend_from_slice(inject_text.as_bytes());
         bytes.push(b'\r'); // Enter to submit
         super::send_daemon_action(super::DaemonAction::Write(tid, bytes));
 
-        log::debug!("agend: inject {} bytes into tid={} ({})", formatted_text.len(), tid, instance_name);
         log::debug!(
             "agend daemon: injected {} bytes into terminal {} (instance '{}')",
-            formatted_text.len(), tid, instance_name
+            inject_text.len(), tid, instance_name
         );
     } else {
         log::warn!(

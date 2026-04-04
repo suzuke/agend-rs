@@ -56,8 +56,15 @@ pub fn resolve_binary(name: &str) -> String {
             }
         }
     }
-    // Fallback: check common Homebrew/system paths
-    for prefix in &["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+    // Fallback: check common install paths (Homebrew, system, user-local tools)
+    let home = std::env::var("HOME").unwrap_or_default();
+    let home_paths: Vec<String> = [".opencode/bin", ".local/bin", ".cargo/bin"]
+        .iter()
+        .map(|p| format!("{home}/{p}"))
+        .collect();
+    let mut search_paths: Vec<&str> = home_paths.iter().map(|s| s.as_str()).collect();
+    search_paths.extend_from_slice(&["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]);
+    for prefix in &search_paths {
         let full = format!("{prefix}/{name}");
         if std::path::Path::new(&full).exists() {
             return full;
@@ -411,8 +418,17 @@ pub fn write_opencode_config(cfg: &BackendConfig) -> std::io::Result<SpawnComman
         )?;
     }
 
+    // OpenCode v1.3 TUI doesn't reliably accept injected terminal input in
+    // daemon mode. Instead, start a shell and inject `opencode run --continue`
+    // commands for each incoming message.
+    let oc_binary = resolve_binary("opencode");
+    let marker_path = cfg.instance_dir.join("opencode-binary");
+    std::fs::write(&marker_path, &oc_binary)?;
+
+    // Use the user's login shell
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     Ok(SpawnCommand {
-        command: resolve_binary("opencode"),
+        command: shell,
         env: vec![instance_env(cfg.instance_name)],
     })
 }
@@ -525,7 +541,9 @@ mod tests {
         };
 
         let cmd = write_opencode_config(&cfg).unwrap();
-        assert!(cmd.command.ends_with("opencode"), "command should end with 'opencode', got: {}", cmd.command);
+        // OpenCode backend now starts a shell; the opencode binary path is stored in a marker file
+        assert!(cmd.command.ends_with("sh"), "command should be a shell, got: {}", cmd.command);
+        assert!(instance_dir.join("opencode-binary").exists(), "opencode-binary marker should exist");
         assert!(work_dir.join("opencode.json").exists());
         assert!(work_dir.join(".opencode-instructions.md").exists());
     }
