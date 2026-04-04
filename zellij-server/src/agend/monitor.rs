@@ -94,9 +94,12 @@ static DIALOG_DONT_TRUST_SELECTED: Lazy<Regex> =
 static RESUME_SESSION_PATTERN: Lazy<Regex> =
     Lazy::new(|| Regex::new(r"[Rr]esume\s*[Ss]ession").unwrap());
 
-/// Fatal: command not found.
-static NOT_FOUND_PATTERN: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"command\s*not\s*found|[Nn]ot\s*found").unwrap());
+/// Fatal: shell reports command not found.
+/// Matches "command not found" and "zsh: command not found: foo"
+/// but NOT application-level messages like "Config not found" or "rg not found in $PATH".
+static NOT_FOUND_PATTERN: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r"command\s+not\s+found").unwrap()
+});
 
 // ── Per-terminal state ──────────────────────────────────────────────────
 

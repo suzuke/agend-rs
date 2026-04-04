@@ -35,6 +35,37 @@ pub struct SpawnCommand {
     pub env: Vec<(String, String)>,
 }
 
+/// Resolve a command name to its full path, falling back to the name itself.
+/// This ensures commands work in daemon mode where PATH may be minimal.
+pub fn resolve_binary(name: &str) -> String {
+    // If already an absolute path, use as-is
+    if name.starts_with('/') {
+        return name.to_owned();
+    }
+    // Check PATH first
+    if let Ok(output) = std::process::Command::new("which")
+        .arg(name)
+        .output()
+    {
+        if output.status.success() {
+            if let Ok(path) = String::from_utf8(output.stdout) {
+                let path = path.trim();
+                if !path.is_empty() {
+                    return path.to_owned();
+                }
+            }
+        }
+    }
+    // Fallback: check common Homebrew/system paths
+    for prefix in &["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"] {
+        let full = format!("{prefix}/{name}");
+        if std::path::Path::new(&full).exists() {
+            return full;
+        }
+    }
+    name.to_owned()
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────────
 
 /// Build standard MCP server JSON config block.
@@ -194,7 +225,7 @@ pub fn write_claude_code_config(cfg: &BackendConfig) -> std::io::Result<SpawnCom
     }
 
     Ok(SpawnCommand {
-        command: format!("claude {}", args.join(" ")),
+        command: format!("{} {}", resolve_binary("claude"), args.join(" ")),
         env,
     })
 }
@@ -271,7 +302,7 @@ pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> 
     }
 
     Ok(SpawnCommand {
-        command: format!("codex {}", args.join(" ")),
+        command: format!("{} {}", resolve_binary("codex"), args.join(" ")),
         env: vec![instance_env(cfg.instance_name)],
     })
 }
@@ -304,7 +335,7 @@ pub fn write_gemini_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand>
     }
 
     Ok(SpawnCommand {
-        command: format!("gemini {}", args.join(" ")),
+        command: format!("{} {}", resolve_binary("gemini"), args.join(" ")),
         env: vec![instance_env(cfg.instance_name)],
     })
 }
@@ -381,7 +412,7 @@ pub fn write_opencode_config(cfg: &BackendConfig) -> std::io::Result<SpawnComman
     }
 
     Ok(SpawnCommand {
-        command: "opencode".into(),
+        command: resolve_binary("opencode"),
         env: vec![instance_env(cfg.instance_name)],
     })
 }
@@ -398,7 +429,7 @@ pub fn write_config(backend: &str, cfg: &BackendConfig) -> std::io::Result<Spawn
         _ => {
             // Unknown backend — just run the command
             Ok(SpawnCommand {
-                command: backend.into(),
+                command: resolve_binary(backend),
                 env: vec![],
             })
         },
@@ -494,7 +525,7 @@ mod tests {
         };
 
         let cmd = write_opencode_config(&cfg).unwrap();
-        assert_eq!(cmd.command, "opencode");
+        assert!(cmd.command.ends_with("opencode"), "command should end with 'opencode', got: {}", cmd.command);
         assert!(work_dir.join("opencode.json").exists());
         assert!(work_dir.join(".opencode-instructions.md").exists());
     }

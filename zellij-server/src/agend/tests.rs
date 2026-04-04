@@ -49,7 +49,7 @@ instances:
         let layout = FleetManager::generate_layout(&config, "/usr/bin/zellij");
 
         assert!(layout.contains("tab name=\"test-inst\""));
-        assert!(layout.contains("pane command=\"claude\""));
+        assert!(layout.contains("pane command=\"") && layout.contains("claude\""));
         assert!(layout.contains("cwd=\"/tmp/test\""));
         assert!(layout.contains("--dangerously-skip-permissions"));
         // Should now include --mcp-config flag

@@ -150,11 +150,11 @@ fn parse_command(cmd: &str) -> (String, Vec<String>) {
 /// Get a simple command + args for a backend (no config writing).
 pub fn simple_command(backend: &str) -> (String, Vec<String>) {
     match backend {
-        "claude-code" => ("claude".into(), vec![]),
-        "codex" => ("codex".into(), vec![]),
-        "gemini-cli" => ("gemini".into(), vec!["--yolo".into()]),
-        "opencode" => ("opencode".into(), vec![]),
-        other => (other.into(), vec![]),
+        "claude-code" => (super::backend::resolve_binary("claude"), vec![]),
+        "codex" => (super::backend::resolve_binary("codex"), vec![]),
+        "gemini-cli" => (super::backend::resolve_binary("gemini"), vec!["--yolo".into()]),
+        "opencode" => (super::backend::resolve_binary("opencode"), vec![]),
+        other => (super::backend::resolve_binary(other), vec![]),
     }
 }
 
