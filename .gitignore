@@ -5,3 +5,6 @@ target/
 .idea
 .DS_Store
 /assets/man/zellij.1
+.worktrees
+.env
+.env.*
