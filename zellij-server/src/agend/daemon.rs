@@ -788,6 +788,15 @@ impl Daemon {
                 }
             }
 
+            // Persist to fleet.yaml so instance survives restart
+            if let Err(e) = FleetConfig::append_instance(
+                name, dir, backend,
+                args["description"].as_str(),
+                topic_id,
+            ) {
+                log::warn!("agend daemon: failed to persist instance to fleet.yaml: {e}");
+            }
+
             let _ = self.db.insert_event(name, "instance_created", None, None, Some(&format!("Created at {dir}")), None);
             log::info!("agend daemon: creating instance '{name}' at {dir}");
             Ok(json!({"created": true, "name": name, "directory": dir, "topic_id": topic_id}))

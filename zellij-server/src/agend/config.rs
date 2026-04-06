@@ -179,4 +179,47 @@ impl FleetConfig {
     pub fn load_default() -> anyhow::Result<Self> {
         Self::load(&super::paths::agend_home())
     }
+
+    /// Append a new instance entry to fleet.yaml (preserves existing content).
+    pub fn append_instance(
+        name: &str,
+        working_directory: &str,
+        backend: &str,
+        description: Option<&str>,
+        topic_id: Option<i64>,
+    ) -> anyhow::Result<()> {
+        let home = super::paths::agend_home();
+        let yaml_path = home.join("fleet.yaml");
+        let yml_path = home.join("fleet.yml");
+        let path = if yaml_path.exists() {
+            yaml_path
+        } else if yml_path.exists() {
+            yml_path
+        } else {
+            anyhow::bail!("fleet.yaml not found");
+        };
+
+        let mut contents = std::fs::read_to_string(&path)?;
+
+        // Build instance YAML block
+        let mut entry = format!("\n  {}:\n    working_directory: {}\n    backend: {}\n",
+            name, working_directory, backend);
+        if let Some(desc) = description {
+            entry.push_str(&format!("    description: \"{}\"\n", desc.replace('"', "\\\"")));
+        }
+        if let Some(tid) = topic_id {
+            entry.push_str(&format!("    topic_id: {}\n", tid));
+        }
+
+        // Append under instances: section
+        if contents.contains("instances:") {
+            contents.push_str(&entry);
+        } else {
+            contents.push_str(&format!("\ninstances:{}", entry));
+        }
+
+        std::fs::write(&path, contents)?;
+        log::info!("agend config: appended instance '{}' to {}", name, path.display());
+        Ok(())
+    }
 }
