@@ -277,17 +277,26 @@ fn pre_approve_claude_api_key() {
 pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> {
     std::fs::create_dir_all(cfg.instance_dir)?;
 
+    // Per-instance CODEX_HOME to isolate config (avoids MCP registration conflicts)
+    let codex_home = cfg.instance_dir.join(".codex-home");
+    std::fs::create_dir_all(&codex_home)?;
+
     // System prompt
     if let Some(prompt) = cfg.system_prompt {
         std::fs::write(cfg.instance_dir.join("system-prompt.md"), prompt)?;
     }
 
-    // MCP setup script
+    // MCP setup script (uses CODEX_HOME for isolation)
+    let codex_bin = resolve_binary("codex");
     let setup = format!(
-        "codex mcp add {key} --env {env_name}=\"{name}\" --env {env_sock}=\"{sock}\" -- {bin} {sub} 2>/dev/null || true\n",
+        "export CODEX_HOME=\"{codex_home}\"\n\
+         {codex_bin} mcp add {key} --env {env_name}=\"{name}\" --env {env_sock}=\"{sock}\" --env {env_ts}=\"{ts}\" -- {bin} {sub} 2>/dev/null || true\n",
+        codex_home = codex_home.display(),
+        codex_bin = codex_bin,
         key = MCP_SERVER_KEY,
         env_name = ENV_INSTANCE_NAME, name = cfg.instance_name,
         env_sock = ENV_SOCKET_PATH, sock = cfg.socket_path.display(),
+        env_ts = ENV_TOOL_SET, ts = cfg.tool_set,
         bin = cfg.mcp_server_binary, sub = MCP_SUBCOMMAND,
     );
     let setup_path = cfg.instance_dir.join("setup-mcp.sh");
@@ -309,8 +318,7 @@ pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> 
         args.push(format!("--model \"{m}\""));
     }
 
-    let codex_bin = resolve_binary("codex");
-    // Run MCP setup before starting Codex (registers agend MCP server)
+    // Run MCP setup before starting Codex (registers agend MCP server in isolated home)
     let command = format!(
         "bash -c 'source {} 2>/dev/null; {} {}'",
         setup_path.display(), codex_bin, args.join(" ")
@@ -318,7 +326,10 @@ pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> 
 
     Ok(SpawnCommand {
         command,
-        env: vec![instance_env(cfg.instance_name)],
+        env: vec![
+            instance_env(cfg.instance_name),
+            ("CODEX_HOME".into(), codex_home.display().to_string()),
+        ],
     })
 }
 
