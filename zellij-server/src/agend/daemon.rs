@@ -1327,10 +1327,32 @@ fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
             inject_text.len(), tid, instance_name
         );
     } else {
-        log::warn!(
-            "agend daemon: no terminal registered for instance '{}', message dropped",
-            instance_name
-        );
+        // Terminal not registered yet (instance just created). Retry in background.
+        let name = instance_name.to_owned();
+        let text = formatted_text.to_owned();
+        std::thread::Builder::new()
+            .name(format!("msg_retry_{name}"))
+            .spawn(move || {
+                for attempt in 1..=10 {
+                    std::thread::sleep(std::time::Duration::from_secs(attempt));
+                    if let Some(tid) = super::terminal_for_instance(&name) {
+                        let mut bytes = Vec::with_capacity(text.len() + 1);
+                        bytes.extend_from_slice(text.as_bytes());
+                        bytes.push(b'\r');
+                        super::send_daemon_action(super::DaemonAction::Write(tid, bytes));
+                        log::info!(
+                            "agend daemon: delivered queued message to '{}' after {}s",
+                            name, attempt
+                        );
+                        return;
+                    }
+                }
+                log::warn!(
+                    "agend daemon: gave up delivering message to '{}' after 10 retries",
+                    name
+                );
+            })
+            .ok();
     }
 }
 
