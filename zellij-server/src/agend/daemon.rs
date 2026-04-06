@@ -414,7 +414,11 @@ impl Daemon {
         let target = args["instance_name"].as_str().unwrap_or("");
         let message = args["message"].as_str().unwrap_or("");
 
-        if !self.config.instances.contains_key(target) {
+        let is_config_instance = self.config.instances.contains_key(target);
+        let is_runtime_instance = self.runtime_instances.read()
+            .map(|rt| rt.contains_key(target))
+            .unwrap_or(false);
+        if !is_config_instance && !is_runtime_instance {
             return Err(format!("instance not found: {target}"));
         }
 
@@ -478,7 +482,7 @@ impl Daemon {
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect())
             .unwrap_or_else(|| {
-                self.config.instances.iter()
+                let mut names: Vec<String> = self.config.instances.iter()
                     .filter(|(n, ic)| {
                         n.as_str() != sender
                             && (filter_tags.is_empty()
@@ -487,7 +491,18 @@ impl Daemon {
                                 || team_members.iter().any(|m| m == n.as_str()))
                     })
                     .map(|(n, _)| n.clone())
-                    .collect()
+                    .collect();
+                // Include runtime (dynamically created) instances
+                if let Ok(rt) = self.runtime_instances.read() {
+                    for name in rt.keys() {
+                        if name.as_str() != sender && !names.contains(name)
+                            && (team_members.is_empty() || team_members.iter().any(|m| m == name.as_str()))
+                        {
+                            names.push(name.clone());
+                        }
+                    }
+                }
+                names
             });
 
         let mut sent = 0;
@@ -554,8 +569,8 @@ impl Daemon {
 
     fn handle_describe_instance(&self, args: &Value) -> Result<Value, String> {
         let name = args["name"].as_str().unwrap_or("");
-        match self.config.instances.get(name) {
-            Some(ic) => Ok(json!({
+        if let Some(ic) = self.config.instances.get(name) {
+            Ok(json!({
                 "name": name,
                 "display_name": ic.display_name_or(name),
                 "backend": ic.backend_or(&self.config.defaults),
@@ -565,8 +580,17 @@ impl Daemon {
                 "topic_id": ic.topic_id,
                 "model": ic.model,
                 "skip_permissions": ic.skip_permissions,
-            })),
-            None => Err(format!("instance not found: {name}")),
+            }))
+        } else if let Some(ri) = self.runtime_instances.read().ok().and_then(|rt| rt.get(name).cloned()) {
+            Ok(json!({
+                "name": name,
+                "backend": ri.backend,
+                "working_directory": ri.working_directory,
+                "description": ri.description,
+                "dynamic": true,
+            }))
+        } else {
+            Err(format!("instance not found: {name}"))
         }
     }
 
