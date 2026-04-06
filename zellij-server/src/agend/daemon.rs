@@ -1240,7 +1240,7 @@ fn load_env_file() {
         if let Some((key, value)) = trimmed.split_once('=') {
             let key = key.trim();
             let value = value.trim().trim_matches('"').trim_matches('\'');
-            if !key.is_empty() && std::env::var(key).is_err() {
+            if !key.is_empty() {
                 std::env::set_var(key, value);
                 count += 1;
             }
