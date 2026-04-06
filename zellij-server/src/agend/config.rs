@@ -103,6 +103,8 @@ pub struct InstanceConfig {
     pub display_name: Option<String>,
     /// System prompt: inline string or "file:path/to/prompt.md" reference.
     pub system_prompt: Option<String>,
+    /// Tool set profile: "full" (default), "standard", or "minimal".
+    pub tool_set: Option<String>,
 }
 
 impl InstanceConfig {

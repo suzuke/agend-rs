@@ -55,7 +55,7 @@ impl FleetManager {
                 system_prompt: resolved_prompt.as_deref(),
                 skip_permissions: ic.skip_permissions,
                 model: ic.model.as_deref().or(config.defaults.model.as_deref()),
-                tool_set: "full",
+                tool_set: ic.tool_set.as_deref().unwrap_or("full"),
                 session_id: read_session_id(&instance_dir),
             };
 

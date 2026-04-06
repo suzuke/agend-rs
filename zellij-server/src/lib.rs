@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 #[cfg(not(windows))]
 #[path = "os_input_output_unix.rs"]
 mod os_input_output_unix;
