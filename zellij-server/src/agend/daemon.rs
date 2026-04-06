@@ -45,6 +45,10 @@ impl Daemon {
         std::fs::create_dir_all(db_path.parent().unwrap()).ok();
 
         let db = AgendDb::open(&db_path).expect("failed to open agend database");
+        match db.prune_events(30) {
+            Ok(n) if n > 0 => log::info!("agend daemon: pruned {n} old events"),
+            _ => {},
+        }
         log::info!("agend daemon: database opened at {}", db_path.display());
 
         let mut routing = RoutingEngine::new();
@@ -103,9 +107,15 @@ impl Daemon {
 
         // Also listen for inbound Telegram messages
         let telegram_inbound = self.telegram.as_ref().map(|t| &t.inbound_rx);
-        if let Some(rx) = telegram_inbound {
-            sel.recv(rx);
-        }
+        let telegram_index = if let Some(rx) = telegram_inbound {
+            Some(sel.recv(rx))
+        } else {
+            None
+        };
+
+        // Listen for internal events (health, pty errors, etc.)
+        let inbox_rx = super::daemon_inbox_rx();
+        let inbox_index = sel.recv(inbox_rx);
 
         loop {
             let oper = sel.select();
@@ -116,10 +126,15 @@ impl Daemon {
                 if let Ok(req) = oper.recv(receivers[index]) {
                     self.handle_ipc_request(req);
                 }
-            } else if let Some(rx) = telegram_inbound {
-                // Telegram inbound message
-                if let Ok(msg) = oper.recv(rx) {
-                    self.handle_telegram_inbound(msg);
+            } else if telegram_index == Some(index) {
+                if let Some(rx) = telegram_inbound {
+                    if let Ok(msg) = oper.recv(rx) {
+                        self.handle_telegram_inbound(msg);
+                    }
+                }
+            } else if index == inbox_index {
+                if let Ok(event) = oper.recv(inbox_rx) {
+                    self.handle_daemon_event(event);
                 }
             }
         }
@@ -270,6 +285,19 @@ impl Daemon {
             // ── Task CRUD ───────────────────────────────────────────────
             "task" => self.handle_task(instance_name, args),
 
+            // ── Event Log ─────────────────────────────────────────────────
+            "list_events" => {
+                match self.db.query_events(
+                    args["instance"].as_str(),
+                    args["event_type"].as_str(),
+                    args["since"].as_str(),
+                    args["limit"].as_u64().map(|l| l as u32),
+                ) {
+                    Ok(events) => Ok(serde_json::to_value(events).unwrap()),
+                    Err(e) => Err(format!("db error: {e}")),
+                }
+            },
+
             // ── Schedule CRUD ───────────────────────────────────────────
             "create_schedule" => {
                 match self.db.create_schedule(
@@ -321,6 +349,7 @@ impl Daemon {
                 let name = args["name"].as_str().unwrap_or("");
                 log::info!("agend daemon: delete_instance '{name}' requested");
                 super::send_daemon_action(super::DaemonAction::CloseTab(name.to_owned()));
+                let _ = self.db.insert_event(name, "instance_deleted", None, None, Some("Instance deleted"), None);
                 Ok(json!({"deleted": true, "name": name}))
             },
 
@@ -553,6 +582,7 @@ impl Daemon {
                         cwd: ic.working_directory.clone(),
                     });
 
+                    let _ = self.db.insert_event(directory, "instance_started", None, None, Some("Instance started"), None);
                     log::info!("agend daemon: starting instance '{directory}'");
                     Ok(json!({"started": true, "name": directory}))
                 },
@@ -637,6 +667,7 @@ impl Daemon {
                 }
             }
 
+            let _ = self.db.insert_event(name, "instance_created", None, None, Some(&format!("Created at {dir}")), None);
             log::info!("agend daemon: creating instance '{name}' at {dir}");
             Ok(json!({"created": true, "name": name, "directory": dir, "topic_id": topic_id}))
         }
@@ -908,6 +939,21 @@ impl Daemon {
     }
 
     fn handle_telegram_inbound(&self, msg: super::telegram::InboundMessage) {
+        // Intercept slash commands before forwarding to instance
+        let cmd = msg.text.split_whitespace().next().unwrap_or("");
+        if cmd.starts_with('/') {
+            let base_cmd = cmd.split('@').next().unwrap_or(cmd);
+            if let Some(response) = self.handle_topic_command(base_cmd) {
+                self.notify_telegram_to(
+                    &msg.chat_id,
+                    msg.thread_id.as_deref(),
+                    &response,
+                );
+                return;
+            }
+            // Unknown command — fall through to forward to instance
+        }
+
         if let Some(ref target) = msg.target_instance {
             let thread_id = msg.thread_id.as_deref().unwrap_or("");
             let attachment_info = msg.attachment_file_id.as_ref()
@@ -918,6 +964,15 @@ impl Daemon {
                 msg.username, msg.chat_id, thread_id, attachment_info, msg.text, msg.chat_id
             );
             inject_message_to_instance(target, &formatted);
+            let summary = if msg.text.len() > 120 { &msg.text[..120] } else { &msg.text };
+            let _ = self.db.insert_event(
+                target,
+                "telegram_message",
+                Some(&msg.username),
+                Some(target),
+                Some(summary),
+                None,
+            );
             log::info!(
                 "agend daemon: telegram {} → {}: {}",
                 msg.username, target, &msg.text[..msg.text.len().min(100)]
@@ -925,6 +980,160 @@ impl Daemon {
         } else {
             log::debug!("agend daemon: telegram message without target instance, ignoring");
         }
+    }
+
+    /// Handle a topic command (/status, /restart, /sysinfo). Returns response text or None.
+    fn handle_topic_command(&self, cmd: &str) -> Option<String> {
+        match cmd {
+            "/status" => Some(self.cmd_status()),
+            "/restart" => Some(self.cmd_restart()),
+            "/sysinfo" | "/sys-info" | "/sys_info" => Some(self.cmd_sysinfo()),
+            _ => None,
+        }
+    }
+
+    fn cmd_status(&self) -> String {
+        let mut lines = vec!["Fleet Status".to_owned()];
+        for (name, ic) in &self.config.instances {
+            let backend = ic.backend_or(&self.config.defaults);
+            let last = super::monitor::last_activity_secs(name);
+            let now_ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            let idle = now_ts.saturating_sub(last);
+            let icon = if last == 0 {
+                "⚪" // never seen
+            } else if idle > 15 * 60 {
+                "🔴" // possibly hung
+            } else {
+                "🟢" // active
+            };
+            lines.push(format!("{icon} {name} ({backend}) — idle {idle}s"));
+        }
+        // Include runtime instances
+        if let Ok(rt) = self.runtime_instances.read() {
+            for (name, ri) in rt.iter() {
+                let last = super::monitor::last_activity_secs(name);
+                let now_ts = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let idle = now_ts.saturating_sub(last);
+                let icon = if last == 0 { "⚪" } else if idle > 15 * 60 { "🔴" } else { "🟢" };
+                lines.push(format!("{icon} {name} ({}) — idle {idle}s", ri.backend));
+            }
+        }
+        lines.join("\n")
+    }
+
+    fn cmd_restart(&self) -> String {
+        // Restart all instances via health system
+        for name in self.config.instances.keys() {
+            super::health::clear_session_id(name);
+            super::send_daemon_action(super::DaemonAction::CloseTab(name.clone()));
+        }
+        // Health checker will respawn them on next cycle
+        "Restarting all instances...".to_owned()
+    }
+
+    fn cmd_sysinfo(&self) -> String {
+        let mut lines = vec!["System Info".to_owned()];
+        // Uptime
+        if let Ok(uptime) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+            // Process start time approximation from first instance activity
+            let _ = uptime; // actual uptime tracking would need a start timestamp
+        }
+        // Instance details
+        for (name, ic) in &self.config.instances {
+            let backend = ic.backend_or(&self.config.defaults);
+            let has_socket = super::paths::instance_socket(name).exists();
+            let ipc_status = if has_socket { "✓" } else { "✗" };
+            lines.push(format!("  {name} ({backend}) IPC:{ipc_status}"));
+        }
+        // Recent events
+        if let Ok(events) = self.db.query_events(None, None, None, Some(5)) {
+            if !events.is_empty() {
+                lines.push(String::new());
+                lines.push("Recent events:".to_owned());
+                for e in &events {
+                    let summary = e.summary.as_deref().unwrap_or("");
+                    lines.push(format!("  [{}] {} — {}", e.event_type, e.instance_name, summary));
+                }
+            }
+        }
+        lines.join("\n")
+    }
+
+    fn handle_daemon_event(&self, event: super::DaemonEvent) {
+        match event {
+            super::DaemonEvent::Health { instance, event_type, message } => {
+                log::info!("agend daemon: health event [{event_type}] for '{instance}': {message}");
+                // Write to event log
+                let _ = self.db.insert_event(
+                    &instance, &event_type, None, None, Some(&message), None,
+                );
+                // Telegram notification
+                self.notify_telegram(&instance, &format!("[{event_type}] {message}"));
+            },
+            super::DaemonEvent::PtyError { instance, kind, action } => {
+                let event_type = "pty_error";
+                let message = format!("{:?} detected (action: {:?})", kind, action);
+                log::warn!("agend daemon: pty error for '{instance}': {message}");
+                // Write to event log
+                let payload = serde_json::json!({
+                    "kind": format!("{:?}", kind),
+                    "action": format!("{:?}", action),
+                });
+                let _ = self.db.insert_event(
+                    &instance, event_type, None, None, Some(&message), Some(&payload),
+                );
+                // Telegram notification
+                self.notify_telegram(&instance, &format!("⚠ {message}"));
+            },
+        }
+    }
+
+    /// Send a notification to the instance's Telegram topic (or general group).
+    fn notify_telegram(&self, instance_name: &str, text: &str) {
+        let telegram = match self.telegram.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+        // Find the instance's topic thread_id from routing
+        let thread_id = self.routing.read().ok().and_then(|r| {
+            r.thread_for_instance(instance_name).map(|t| t.to_string())
+        });
+        let chat_id = self.config.channel.as_ref()
+            .and_then(|c| c.group_id)
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        if chat_id.is_empty() {
+            return;
+        }
+        let formatted = format!("[{}] {}", instance_name, text);
+        let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
+            chat_id,
+            text: formatted,
+            thread_id,
+            reply_to: None,
+            format: None,
+        });
+    }
+
+    /// Send a message to a specific chat_id and optional thread_id.
+    fn notify_telegram_to(&self, chat_id: &str, thread_id: Option<&str>, text: &str) {
+        let telegram = match self.telegram.as_ref() {
+            Some(t) => t,
+            None => return,
+        };
+        let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
+            chat_id: chat_id.to_owned(),
+            text: text.to_owned(),
+            thread_id: thread_id.map(|s| s.to_owned()),
+            reply_to: None,
+            format: None,
+        });
     }
 
     fn working_dir_for(&self, instance_name: &str) -> String {
