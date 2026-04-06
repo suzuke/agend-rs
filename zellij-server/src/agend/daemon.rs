@@ -298,6 +298,42 @@ impl Daemon {
                 }
             },
 
+            // ── Teams CRUD ─────────────────────────────────────────────
+            "create_team" => {
+                let name = args["name"].as_str().unwrap_or("");
+                let members: Vec<String> = args["members"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect())
+                    .unwrap_or_default();
+                match self.db.create_team(name, args["description"].as_str(), &members) {
+                    Ok(t) => Ok(serde_json::to_value(t).unwrap()),
+                    Err(e) => Err(format!("db error: {e}")),
+                }
+            },
+            "list_teams" => {
+                match self.db.list_teams() {
+                    Ok(teams) => Ok(serde_json::to_value(teams).unwrap()),
+                    Err(e) => Err(format!("db error: {e}")),
+                }
+            },
+            "update_team" => {
+                let name = args["name"].as_str().unwrap_or("");
+                let members: Option<Vec<String>> = args["members"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect());
+                match self.db.update_team(name, args["description"].as_str(), members.as_deref()) {
+                    Ok(t) => Ok(serde_json::to_value(t).unwrap()),
+                    Err(e) => Err(format!("db error: {e}")),
+                }
+            },
+            "delete_team" => {
+                let name = args["name"].as_str().unwrap_or("");
+                match self.db.delete_team(name) {
+                    Ok(()) => Ok(json!({"deleted": true, "name": name})),
+                    Err(e) => Err(format!("db error: {e}")),
+                }
+            },
+
             // ── Schedule CRUD ───────────────────────────────────────────
             "create_schedule" => {
                 match self.db.create_schedule(
@@ -428,6 +464,13 @@ impl Daemon {
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.to_owned())).collect())
             .unwrap_or_default();
+        let filter_team = args["team"].as_str();
+
+        // Resolve team members if team filter is specified
+        let team_members: Vec<String> = filter_team
+            .and_then(|t| self.db.get_team(t).ok().flatten())
+            .map(|t| t.members)
+            .unwrap_or_default();
 
         let targets: Vec<String> = args["targets"]
             .as_array()
@@ -438,6 +481,8 @@ impl Daemon {
                         n.as_str() != sender
                             && (filter_tags.is_empty()
                                 || filter_tags.iter().any(|t| ic.tags.contains(t)))
+                            && (team_members.is_empty()
+                                || team_members.iter().any(|m| m == n.as_str()))
                     })
                     .map(|(n, _)| n.clone())
                     .collect()

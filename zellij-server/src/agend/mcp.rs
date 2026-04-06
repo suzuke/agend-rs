@@ -59,6 +59,20 @@ impl JsonRpcResponse {
 
 // ── MCP Tool definitions ────────────────────────────────────────────────
 
+/// Admin-only tools excluded from "standard" profile.
+const ADMIN_TOOLS: &[&str] = &[
+    "create_instance", "delete_instance", "start_instance",
+    "set_role", "create_team", "update_team", "delete_team",
+    "create_schedule", "update_schedule", "delete_schedule",
+    "checkout_repo", "release_repo",
+];
+
+/// Tools included in "minimal" profile.
+const MINIMAL_TOOLS: &[&str] = &[
+    "reply", "react", "edit_message",
+    "send_to_instance", "list_instances",
+];
+
 fn tool_definitions() -> Value {
     json!({
         "tools": [
@@ -143,6 +157,7 @@ fn tool_definitions() -> Value {
                         "message": {"type": "string"},
                         "targets": {"type": "array", "items": {"type": "string"}, "description": "Specific instance names. Omit to use tags or send to all."},
                         "tags": {"type": "array", "items": {"type": "string"}, "description": "Filter by tags (e.g. ['dev'], ['reviewer']). Only used when targets is omitted."},
+                        "team": {"type": "string", "description": "Filter by team name. Only used when targets is omitted."},
                         "task_summary": {"type": "string"},
                         "request_kind": {"type": "string", "enum": ["query", "task", "update"]},
                         "requires_reply": {"type": "boolean"}
@@ -416,6 +431,48 @@ fn tool_definitions() -> Value {
                 }
             },
             {
+                "name": "create_team",
+                "description": "Create a team for grouping instances.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "members": {"type": "array", "items": {"type": "string"}, "description": "Instance names"}
+                    },
+                    "required": ["name", "members"]
+                }
+            },
+            {
+                "name": "list_teams",
+                "description": "List all teams.",
+                "inputSchema": {"type": "object", "properties": {}}
+            },
+            {
+                "name": "update_team",
+                "description": "Update a team's description or members.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "members": {"type": "array", "items": {"type": "string"}}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
+                "name": "delete_team",
+                "description": "Delete a team.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"}
+                    },
+                    "required": ["name"]
+                }
+            },
+            {
                 "name": "list_events",
                 "description": "Query the event log. Returns recent events for auditing and observability.",
                 "inputSchema": {
@@ -602,7 +659,23 @@ pub fn run_stdio_server() {
                 }),
             ),
 
-            "tools/list" => JsonRpcResponse::success(id, tool_definitions()),
+            "tools/list" => {
+                let profile = std::env::var("AGEND_TOOL_SET").unwrap_or_else(|_| "full".into());
+                let mut defs = tool_definitions();
+                if profile != "full" {
+                    if let Some(tools) = defs.get_mut("tools").and_then(|t| t.as_array_mut()) {
+                        tools.retain(|tool| {
+                            let name = tool["name"].as_str().unwrap_or("");
+                            match profile.as_str() {
+                                "minimal" => MINIMAL_TOOLS.contains(&name),
+                                "standard" => !ADMIN_TOOLS.contains(&name),
+                                _ => true, // unknown profile = full
+                            }
+                        });
+                    }
+                }
+                JsonRpcResponse::success(id, defs)
+            },
 
             "tools/call" => {
                 let tool_name = request

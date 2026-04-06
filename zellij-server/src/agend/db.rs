@@ -62,6 +62,13 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_status       TEXT
 );
 
+CREATE TABLE IF NOT EXISTS teams (
+    name        TEXT PRIMARY KEY,
+    description TEXT,
+    members     TEXT,
+    created_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS events (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
     instance_name TEXT NOT NULL,
@@ -107,6 +114,14 @@ pub struct Task {
     pub result: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Team {
+    pub name: String,
+    pub description: Option<String>,
+    pub members: Vec<String>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -510,6 +525,66 @@ impl AgendDb {
         Ok(())
     }
 
+    // ── Teams ─────────────────────────────────────────────────────────
+
+    pub fn create_team(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        members: &[String],
+    ) -> SqlResult<Team> {
+        let now = now_iso();
+        let members_json = serde_json::to_string(members).unwrap();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO teams (name, description, members, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![name, description, members_json, now],
+        )?;
+        Ok(self.get_team(name)?.unwrap())
+    }
+
+    pub fn get_team(&self, name: &str) -> SqlResult<Option<Team>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, description, members, created_at FROM teams WHERE name = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![name], row_to_team)?;
+        Ok(rows.next().transpose()?)
+    }
+
+    pub fn list_teams(&self) -> SqlResult<Vec<Team>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name, description, members, created_at FROM teams ORDER BY name",
+        )?;
+        let rows = stmt.query_map([], row_to_team)?.filter_map(|r| r.ok()).collect();
+        Ok(rows)
+    }
+
+    pub fn update_team(
+        &self,
+        name: &str,
+        description: Option<&str>,
+        members: Option<&[String]>,
+    ) -> SqlResult<Team> {
+        if let Some(d) = description {
+            self.conn.execute(
+                "UPDATE teams SET description = ?1 WHERE name = ?2",
+                params![d, name],
+            )?;
+        }
+        if let Some(m) = members {
+            let members_json = serde_json::to_string(m).unwrap();
+            self.conn.execute(
+                "UPDATE teams SET members = ?1 WHERE name = ?2",
+                params![members_json, name],
+            )?;
+        }
+        Ok(self.get_team(name)?.unwrap())
+    }
+
+    pub fn delete_team(&self, name: &str) -> SqlResult<()> {
+        self.conn.execute("DELETE FROM teams WHERE name = ?1", params![name])?;
+        Ok(())
+    }
+
     // ── Event Log ────────────────────────────────────────────────────────
 
     pub fn insert_event(
@@ -648,6 +723,19 @@ fn row_to_schedule(row: &rusqlite::Row) -> SqlResult<Schedule> {
     })
 }
 
+fn row_to_team(row: &rusqlite::Row) -> SqlResult<Team> {
+    let members_json: Option<String> = row.get(2)?;
+    let members: Vec<String> = members_json
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    Ok(Team {
+        name: row.get(0)?,
+        description: row.get(1)?,
+        members,
+        created_at: row.get(3)?,
+    })
+}
+
 fn row_to_event(row: &rusqlite::Row) -> SqlResult<Event> {
     let payload_str: Option<String> = row.get(6)?;
     let payload = payload_str.and_then(|s| serde_json::from_str(&s).ok());
@@ -735,6 +823,25 @@ mod tests {
 
         db.delete_schedule(&s.id).unwrap();
         let list = db.list_schedules(None).unwrap();
+        assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn team_crud() {
+        let db = AgendDb::open_in_memory().unwrap();
+
+        let t = db.create_team("backend", Some("Backend team"), &["inst-a".into(), "inst-b".into()]).unwrap();
+        assert_eq!(t.name, "backend");
+        assert_eq!(t.members.len(), 2);
+
+        let list = db.list_teams().unwrap();
+        assert_eq!(list.len(), 1);
+
+        let t = db.update_team("backend", None, Some(&["inst-a".into(), "inst-b".into(), "inst-c".into()])).unwrap();
+        assert_eq!(t.members.len(), 3);
+
+        db.delete_team("backend").unwrap();
+        let list = db.list_teams().unwrap();
         assert_eq!(list.len(), 0);
     }
 
