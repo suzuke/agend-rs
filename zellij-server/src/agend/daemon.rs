@@ -455,15 +455,39 @@ impl Daemon {
         );
         inject_message_to_instance(target, &formatted);
 
-        // Post visibility to Telegram if available
+        // Post cross-instance visibility to Telegram (both sender + receiver topics)
         if let Some(ref telegram) = self.telegram {
-            if let Some(topic_id) = self.config.instances.get(target).and_then(|i| i.topic_id) {
-                let group_id = self.config.channel.as_ref().and_then(|c| c.group_id);
-                if let Some(gid) = group_id {
+            let group_id = self.config.channel.as_ref().and_then(|c| c.group_id);
+            if let Some(gid) = group_id {
+                let summary = truncate_utf8(message, 200);
+                let visibility_text = format!("{} → {}: {}", sender, target, summary);
+
+                // Resolve topic IDs from config or routing (for dynamic instances)
+                let receiver_topic = self.config.instances.get(target)
+                    .and_then(|i| i.topic_id.map(|id| id.to_string()))
+                    .or_else(|| self.routing.read().ok()
+                        .and_then(|r| r.thread_for_instance(target).map(|s| s.to_owned())));
+                let sender_topic = self.config.instances.get(sender)
+                    .and_then(|i| i.topic_id.map(|id| id.to_string()))
+                    .or_else(|| self.routing.read().ok()
+                        .and_then(|r| r.thread_for_instance(sender).map(|s| s.to_owned())));
+
+                // Post to receiver's topic
+                if let Some(tid) = receiver_topic {
                     let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
                         chat_id: gid.to_string(),
-                        text: format!("← {sender}:\n{message}"),
-                        thread_id: Some(topic_id.to_string()),
+                        text: visibility_text.clone(),
+                        thread_id: Some(tid),
+                        reply_to: None,
+                        format: None,
+                    });
+                }
+                // Post to sender's topic (if different)
+                if let Some(tid) = sender_topic {
+                    let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
+                        chat_id: gid.to_string(),
+                        text: format!("→ {}: {}", target, summary),
+                        thread_id: Some(tid),
                         reply_to: None,
                         format: None,
                     });
