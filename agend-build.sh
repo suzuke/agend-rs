@@ -4,6 +4,18 @@ set -e
 cd "$(dirname "$0")"
 
 ACTION="${1:-build}"
+RELEASE_FLAG="${2:-}"
+
+# Resolve binary path: prefer release if exists, else debug
+resolve_binary() {
+  if [ -f ./target/release/zellij ]; then
+    echo "./target/release/zellij"
+  elif [ -f ./target/debug/zellij ]; then
+    echo "./target/debug/zellij"
+  else
+    echo ""
+  fi
+}
 
 case "$ACTION" in
   build)
@@ -21,10 +33,24 @@ case "$ACTION" in
     cargo test --features "agend" -p zellij-server -- agend
     ;;
   run)
-    echo "🚀 Starting agend..."
-    # Clean up dead session if exists (Zellij refuses to create a new one with same name)
-    ./target/debug/zellij delete-session agend 2>/dev/null || true
-    ./target/debug/zellij agend
+    if [ "$RELEASE_FLAG" = "--release" ]; then
+      # Release mode: build release + run
+      echo "🔨 Building agend-rs (release)..."
+      cargo build --release --no-default-features --features "vendored_curl,agend"
+      BINARY="./target/release/zellij"
+    else
+      # Debug mode: auto-build if binary missing, else use existing
+      BINARY="$(resolve_binary)"
+      if [ -z "$BINARY" ]; then
+        echo "🔨 No binary found, building..."
+        cargo build --no-default-features --features "vendored_curl,agend"
+        BINARY="./target/debug/zellij"
+      fi
+    fi
+    echo "🚀 Starting agend (${BINARY})..."
+    # Clean up dead session if exists
+    "$BINARY" delete-session agend 2>/dev/null || true
+    "$BINARY" agend
     ;;
   check)
     echo "🔍 Checking..."
@@ -33,15 +59,15 @@ case "$ACTION" in
     ;;
   stop)
     echo "🛑 Stopping agend..."
-    # Kill the zellij session named "agend" (kills server + all panes)
-    ./target/debug/zellij kill-session agend 2>/dev/null || \
-    ./target/release/zellij kill-session agend 2>/dev/null || \
-    echo "No agend session found"
-    # Also kill any orphaned zellij server processes running agend
+    BINARY="$(resolve_binary)"
+    if [ -n "$BINARY" ]; then
+      "$BINARY" kill-session agend 2>/dev/null || true
+    fi
     pkill -f "zellij.*agend" 2>/dev/null || true
     # Delete dead session so next run doesn't conflict
-    ./target/debug/zellij delete-session agend 2>/dev/null || \
-    ./target/release/zellij delete-session agend 2>/dev/null || true
+    if [ -n "$BINARY" ]; then
+      "$BINARY" delete-session agend 2>/dev/null || true
+    fi
     echo "✅ Stopped"
     ;;
   clean)
@@ -49,7 +75,7 @@ case "$ACTION" in
     echo "🧹 Cleaned"
     ;;
   *)
-    echo "Usage: $0 {build|release|test|run|stop|check|clean}"
+    echo "Usage: $0 {build|release|test|run [--release]|stop|check|clean}"
     exit 1
     ;;
 esac
