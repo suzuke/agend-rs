@@ -6433,6 +6433,22 @@ pub(crate) fn screen_thread_main(
                     (client_id, is_web_client),
                     blocking_terminal,
                 )?;
+
+                // AgEnD hook: register new pane terminals for dynamic instances
+                // (NewTab path doesn't go through NewPane, so on_new_pane isn't called)
+                #[cfg(feature = "agend")]
+                {
+                    let tab_name = screen.tabs.get(&tab_id).map(|t| t.name.clone());
+                    if let Some(name) = tab_name {
+                        for (tid, _) in &new_pane_pids {
+                            crate::agend::on_new_pane(
+                                crate::panes::PaneId::Terminal(*tid),
+                                Some(&name),
+                            );
+                        }
+                    }
+                }
+
                 pending_tab_ids.remove(&tab_id);
                 if pending_tab_ids.is_empty() {
                     for (tab_index, client_id) in pending_tab_switches.drain() {
