@@ -9,7 +9,7 @@ use super::db::AgendDb;
 use super::ipc::{IpcRequest, IpcResponse, IpcServer};
 use super::routing::RoutingEngine;
 use super::telegram::{OutboundAction, TelegramAdapter, TelegramSender};
-use crossbeam::channel::Receiver;
+use crossbeam::channel::{Receiver, Sender};
 use isahc::ReadResponseExt;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -30,8 +30,11 @@ pub struct Daemon {
     config: FleetConfig,
     db: AgendDb,
     routing: Arc<RwLock<RoutingEngine>>,
-    /// Instance name → IPC request receiver
+    /// Instance name → IPC request receiver (static instances from fleet.yaml)
     ipc_receivers: HashMap<String, Receiver<IpcRequest>>,
+    /// Shared IPC channel for dynamically created instances
+    dynamic_ipc_tx: Sender<IpcRequest>,
+    dynamic_ipc_rx: Receiver<IpcRequest>,
     /// Telegram adapter sender (if configured)
     telegram: Option<TelegramSender>,
     /// Dynamically created instances (not in fleet.yaml)
@@ -78,12 +81,17 @@ impl Daemon {
                 adapter.run()
             });
 
+        // Shared channel for dynamic instance IPC servers
+        let (dynamic_ipc_tx, dynamic_ipc_rx) = crossbeam::channel::bounded(256);
+
         Self {
             config,
             db,
             routing,
             runtime_instances: Arc::new(RwLock::new(HashMap::new())),
             ipc_receivers,
+            dynamic_ipc_tx,
+            dynamic_ipc_rx,
             telegram,
         }
     }
@@ -115,6 +123,9 @@ impl Daemon {
             None
         };
 
+        // Listen for dynamic instance IPC requests (shared channel)
+        let dynamic_ipc_index = sel.recv(&self.dynamic_ipc_rx);
+
         // Listen for internal events (health, pty errors, etc.)
         let inbox_rx = super::daemon_inbox_rx();
         let inbox_index = sel.recv(inbox_rx);
@@ -124,8 +135,13 @@ impl Daemon {
             let index = oper.index();
 
             if index < receivers.len() {
-                // IPC request from an instance
+                // IPC request from a static instance
                 if let Ok(req) = oper.recv(receivers[index]) {
+                    self.handle_ipc_request(req);
+                }
+            } else if index == dynamic_ipc_index {
+                // IPC request from a dynamic instance
+                if let Ok(req) = oper.recv(&self.dynamic_ipc_rx) {
                     self.handle_ipc_request(req);
                 }
             } else if telegram_index == Some(index) {
@@ -712,6 +728,10 @@ impl Daemon {
                 },
                 Err(e) => return Err(format!("failed to write config: {e}")),
             }
+
+            // Start IPC server for the new instance (uses shared dynamic channel)
+            let ipc_server = IpcServer::with_sender(socket_path, self.dynamic_ipc_tx.clone());
+            ipc_server.start(name.to_owned());
 
             // Register in runtime instances so list_instances shows it
             if let Ok(mut rt) = self.runtime_instances.write() {

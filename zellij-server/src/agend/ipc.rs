@@ -58,6 +58,12 @@ impl IpcServer {
         (Self { socket_path, request_tx: tx }, rx)
     }
 
+    /// Create an IPC server that sends requests through an existing shared channel.
+    /// Used for dynamic instances that are created after the daemon's select loop starts.
+    pub fn with_sender(socket_path: PathBuf, request_tx: Sender<IpcRequest>) -> Self {
+        Self { socket_path, request_tx }
+    }
+
     /// Start listening in a background thread.
     pub fn start(self, instance_name: String) {
         let socket_path = self.socket_path.clone();
