@@ -1,4 +1,4 @@
-//! SQLite storage for decisions, tasks, and schedules.
+//! SQLite storage for decisions, tasks, schedules, and event log.
 
 use rusqlite::{params, Connection, Result as SqlResult};
 use serde::{Deserialize, Serialize};
@@ -61,6 +61,19 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_triggered_at TEXT,
     last_status       TEXT
 );
+
+CREATE TABLE IF NOT EXISTS events (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    instance_name TEXT NOT NULL,
+    event_type    TEXT NOT NULL,
+    sender        TEXT,
+    receiver      TEXT,
+    summary       TEXT,
+    payload       TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_events_instance ON events(instance_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_events_type ON events(event_type, created_at);
 "#;
 
 // ── Data types ──────────────────────────────────────────────────────────
@@ -94,6 +107,18 @@ pub struct Task {
     pub result: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Event {
+    pub id: i64,
+    pub instance_name: String,
+    pub event_type: String,
+    pub sender: Option<String>,
+    pub receiver: Option<String>,
+    pub summary: Option<String>,
+    pub payload: Option<serde_json::Value>,
+    pub created_at: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -484,6 +509,83 @@ impl AgendDb {
         self.conn.execute("DELETE FROM schedules WHERE id = ?1", params![id])?;
         Ok(())
     }
+
+    // ── Event Log ────────────────────────────────────────────────────────
+
+    pub fn insert_event(
+        &self,
+        instance_name: &str,
+        event_type: &str,
+        sender: Option<&str>,
+        receiver: Option<&str>,
+        summary: Option<&str>,
+        payload: Option<&serde_json::Value>,
+    ) -> SqlResult<i64> {
+        let payload_str = payload.map(|v| v.to_string());
+        self.conn.execute(
+            "INSERT INTO events (instance_name, event_type, sender, receiver, summary, payload)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![instance_name, event_type, sender, receiver, summary, payload_str],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn query_events(
+        &self,
+        instance: Option<&str>,
+        event_type: Option<&str>,
+        since: Option<&str>,
+        limit: Option<u32>,
+    ) -> SqlResult<Vec<Event>> {
+        let mut conditions = Vec::new();
+        let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(inst) = instance {
+            values.push(Box::new(inst.to_owned()));
+            conditions.push(format!("instance_name = ?{}", values.len()));
+        }
+        if let Some(et) = event_type {
+            values.push(Box::new(et.to_owned()));
+            conditions.push(format!("event_type = ?{}", values.len()));
+        }
+        if let Some(s) = since {
+            values.push(Box::new(s.to_owned()));
+            conditions.push(format!("created_at >= ?{}", values.len()));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        let lim = limit.unwrap_or(50);
+        values.push(Box::new(lim));
+        let sql = format!(
+            "SELECT id, instance_name, event_type, sender, receiver, summary, payload, created_at \
+             FROM events {} ORDER BY created_at DESC LIMIT ?{}",
+            where_clause,
+            values.len()
+        );
+
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt
+            .query_map(
+                rusqlite::params_from_iter(values.iter().map(|v| v.as_ref())),
+                row_to_event,
+            )?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(rows)
+    }
+
+    pub fn prune_events(&self, days: u32) -> SqlResult<usize> {
+        let n = self.conn.execute(
+            "DELETE FROM events WHERE created_at < datetime('now', ?1)",
+            params![format!("-{days} days")],
+        )?;
+        Ok(n)
+    }
 }
 
 // ── Row mappers ─────────────────────────────────────────────────────────
@@ -543,6 +645,21 @@ fn row_to_schedule(row: &rusqlite::Row) -> SqlResult<Schedule> {
         created_at: row.get(8)?,
         last_triggered_at: row.get(9)?,
         last_status: row.get(10)?,
+    })
+}
+
+fn row_to_event(row: &rusqlite::Row) -> SqlResult<Event> {
+    let payload_str: Option<String> = row.get(6)?;
+    let payload = payload_str.and_then(|s| serde_json::from_str(&s).ok());
+    Ok(Event {
+        id: row.get(0)?,
+        instance_name: row.get(1)?,
+        event_type: row.get(2)?,
+        sender: row.get(3)?,
+        receiver: row.get(4)?,
+        summary: row.get(5)?,
+        payload,
+        created_at: row.get(7)?,
     })
 }
 
@@ -619,6 +736,52 @@ mod tests {
         db.delete_schedule(&s.id).unwrap();
         let list = db.list_schedules(None).unwrap();
         assert_eq!(list.len(), 0);
+    }
+
+    #[test]
+    fn event_log() {
+        let db = AgendDb::open_in_memory().unwrap();
+
+        // Insert events
+        let id1 = db
+            .insert_event("inst-a", "telegram_message", Some("user:123"), Some("inst-a"), Some("Hello"), None)
+            .unwrap();
+        assert!(id1 > 0);
+
+        let payload = serde_json::json!({"reason": "max_age_hours exceeded"});
+        db.insert_event("inst-a", "context_rotation", None, None, Some("Rotating context"), Some(&payload))
+            .unwrap();
+        db.insert_event("inst-b", "crash_respawn", None, None, Some("Instance crashed"), None)
+            .unwrap();
+
+        // Query all
+        let all = db.query_events(None, None, None, None).unwrap();
+        assert_eq!(all.len(), 3);
+
+        // Query by instance
+        let inst_a = db.query_events(Some("inst-a"), None, None, None).unwrap();
+        assert_eq!(inst_a.len(), 2);
+
+        // Query by type
+        let crashes = db.query_events(None, Some("crash_respawn"), None, None).unwrap();
+        assert_eq!(crashes.len(), 1);
+        assert_eq!(crashes[0].instance_name, "inst-b");
+
+        // Query with limit
+        let limited = db.query_events(None, None, None, Some(1)).unwrap();
+        assert_eq!(limited.len(), 1);
+
+        // Verify payload deserialization
+        let rotations = db.query_events(None, Some("context_rotation"), None, None).unwrap();
+        assert_eq!(rotations.len(), 1);
+        let p = rotations[0].payload.as_ref().unwrap();
+        assert_eq!(p["reason"], "max_age_hours exceeded");
+
+        // Prune (all events have just been created, so pruning old ones removes nothing)
+        let pruned = db.prune_events(1).unwrap();
+        assert_eq!(pruned, 0);
+        let still_all = db.query_events(None, None, None, None).unwrap();
+        assert_eq!(still_all.len(), 3);
     }
 
     #[test]

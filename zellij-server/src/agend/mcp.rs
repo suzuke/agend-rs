@@ -414,6 +414,19 @@ fn tool_definitions() -> Value {
                     },
                     "required": ["instance"]
                 }
+            },
+            {
+                "name": "list_events",
+                "description": "Query the event log. Returns recent events for auditing and observability.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {
+                        "instance": {"type": "string", "description": "Filter by instance name"},
+                        "event_type": {"type": "string", "description": "Filter by event type (e.g. telegram_message, instance_created, crash_respawn)"},
+                        "since": {"type": "string", "description": "ISO 8601 timestamp to filter events after"},
+                        "limit": {"type": "number", "description": "Max events to return (default 50)"}
+                    }
+                }
             }
         ]
     })
