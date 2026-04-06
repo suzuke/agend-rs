@@ -96,6 +96,7 @@ pub struct TelegramReceiver {
 // ── Telegram Bot API client ─────────────────────────────────────────────
 
 struct BotApi {
+    #[allow(dead_code)]
     token: String,
     base_url: String,
 }
@@ -174,6 +175,7 @@ impl BotApi {
         }))
     }
 
+    #[allow(dead_code)]
     fn get_file(&self, file_id: &str) -> Result<String, String> {
         let result = self.call("getFile", &json!({"file_id": file_id}))?;
         result["file_path"]
@@ -182,6 +184,7 @@ impl BotApi {
             .ok_or_else(|| "no file_path in response".into())
     }
 
+    #[allow(dead_code)]
     fn download_file(&self, file_path: &str, local_path: &std::path::Path) -> Result<(), String> {
         let url = format!("https://api.telegram.org/file/bot{}/{}", self.token, file_path);
         let mut response = isahc::get(&url).map_err(|e| format!("download: {e}"))?;
@@ -191,6 +194,7 @@ impl BotApi {
     }
 
     /// Download a Telegram file by file_id to local inbox directory.
+    #[allow(dead_code)]
     fn download_attachment(&self, file_id: &str) -> Result<String, String> {
         let tg_path = self.get_file(file_id)?;
         let filename = tg_path.rsplit('/').next().unwrap_or("attachment");

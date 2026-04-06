@@ -131,7 +131,7 @@ fn handle_client(stream: UnixStream, instance_name: &str, request_tx: &Sender<Ip
             },
         };
 
-        let request_id = msg.request_id.unwrap_or(0);
+        let _request_id = msg.request_id.unwrap_or(0);
 
         // Create a per-request reply channel
         let (reply_tx, reply_rx) = channel::bounded(1);

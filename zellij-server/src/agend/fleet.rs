@@ -1,8 +1,7 @@
 //! Fleet manager — generates layout and tracks instance↔terminal mappings.
 
 use super::backend::{self, BackendConfig, SpawnCommand};
-use super::config::{Defaults, FleetConfig, InstanceConfig};
-use super::mcp::generate_mcp_config;
+use super::config::FleetConfig;
 use std::path::PathBuf;
 
 /// Information about a running instance.

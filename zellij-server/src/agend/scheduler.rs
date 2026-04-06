@@ -4,7 +4,7 @@
 //! schedules are due based on their cron expression, and injects
 //! messages into target instances.
 
-use super::db::{AgendDb, Schedule};
+use super::db::AgendDb;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 

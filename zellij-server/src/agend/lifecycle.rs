@@ -141,7 +141,7 @@ pub struct LifecycleManager {
 impl LifecycleManager {
     pub fn from_config(config: &FleetConfig) -> Self {
         let mut instances = HashMap::new();
-        for (name, ic) in &config.instances {
+        for (name, _ic) in &config.instances {
             let policy = config.defaults.restart_policy.clone();
             instances.insert(name.clone(), InstanceLifecycle::new(name.clone(), policy));
         }

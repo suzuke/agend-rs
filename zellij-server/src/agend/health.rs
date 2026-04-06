@@ -4,7 +4,7 @@
 //! max_age_hours is reached. Integrates with lifecycle for crash recovery.
 
 use super::config::FleetConfig;
-use super::lifecycle::{InstanceLifecycle, InstanceState, LifecycleManager};
+use super::lifecycle::{InstanceLifecycle, InstanceState};
 use crossbeam::channel::{self, Receiver, Sender};
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
