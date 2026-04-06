@@ -204,7 +204,7 @@ impl AgendDb {
             )?;
         }
 
-        Ok(self.get_decision(&id)?.unwrap())
+        self.get_decision(&id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn get_decision(&self, id: &str) -> SqlResult<Option<Decision>> {
@@ -302,7 +302,7 @@ impl AgendDb {
             );
             self.conn.execute(&sql, rusqlite::params_from_iter(values.iter().map(|v| v.as_ref())))?;
         }
-        Ok(self.get_decision(id)?.unwrap())
+        self.get_decision(id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     fn prune_expired_decisions(&self) -> SqlResult<usize> {
@@ -339,7 +339,7 @@ impl AgendDb {
             params![id, title, description, priority, assignee, created_by, deps, now],
         )?;
 
-        Ok(self.get_task(&id)?.unwrap())
+        self.get_task(&id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn get_task(&self, id: &str) -> SqlResult<Option<Task>> {
@@ -397,7 +397,7 @@ impl AgendDb {
             "UPDATE tasks SET status = 'claimed', assignee = ?1, updated_at = ?2 WHERE id = ?3",
             params![assignee, now, id],
         )?;
-        Ok(self.get_task(id)?.unwrap())
+        self.get_task(id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn complete_task(&self, id: &str, result: Option<&str>) -> SqlResult<Task> {
@@ -406,7 +406,7 @@ impl AgendDb {
             "UPDATE tasks SET status = 'done', result = ?1, updated_at = ?2 WHERE id = ?3",
             params![result, now, id],
         )?;
-        Ok(self.get_task(id)?.unwrap())
+        self.get_task(id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn update_task(
@@ -435,7 +435,7 @@ impl AgendDb {
                 params![a, now, id],
             )?;
         }
-        Ok(self.get_task(id)?.unwrap())
+        self.get_task(id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     // ── Schedules ───────────────────────────────────────────────────────
@@ -457,7 +457,7 @@ impl AgendDb {
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![id, cron, message, source, target, label, tz, now],
         )?;
-        Ok(self.get_schedule(&id)?.unwrap())
+        self.get_schedule(&id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn get_schedule(&self, id: &str) -> SqlResult<Option<Schedule>> {
@@ -517,7 +517,7 @@ impl AgendDb {
             self.conn.execute("UPDATE schedules SET enabled = ?1 WHERE id = ?2", params![v as i32, id])?;
         }
         let _ = now; // used conceptually for audit
-        Ok(self.get_schedule(id)?.unwrap())
+        self.get_schedule(id)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn delete_schedule(&self, id: &str) -> SqlResult<()> {
@@ -539,7 +539,7 @@ impl AgendDb {
             "INSERT OR REPLACE INTO teams (name, description, members, created_at) VALUES (?1, ?2, ?3, ?4)",
             params![name, description, members_json, now],
         )?;
-        Ok(self.get_team(name)?.unwrap())
+        self.get_team(name)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn get_team(&self, name: &str) -> SqlResult<Option<Team>> {
@@ -577,7 +577,7 @@ impl AgendDb {
                 params![members_json, name],
             )?;
         }
-        Ok(self.get_team(name)?.unwrap())
+        self.get_team(name)?.ok_or(rusqlite::Error::QueryReturnedNoRows)
     }
 
     pub fn delete_team(&self, name: &str) -> SqlResult<()> {

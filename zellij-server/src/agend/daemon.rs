@@ -1035,7 +1035,7 @@ impl Daemon {
                 msg.username, msg.chat_id, thread_id, attachment_info, msg.text, msg.chat_id
             );
             inject_message_to_instance(target, &formatted);
-            let summary = if msg.text.len() > 120 { &msg.text[..120] } else { &msg.text };
+            let summary = truncate_utf8(&msg.text, 120);
             let _ = self.db.insert_event(
                 target,
                 "telegram_message",
@@ -1046,7 +1046,7 @@ impl Daemon {
             );
             log::info!(
                 "agend daemon: telegram {} → {}: {}",
-                msg.username, target, &msg.text[..msg.text.len().min(100)]
+                msg.username, target, truncate_utf8(&msg.text, 100)
             );
         } else {
             log::debug!("agend daemon: telegram message without target instance, ignoring");
@@ -1249,6 +1249,18 @@ fn load_env_file() {
     if count > 0 {
         log::info!("agend daemon: loaded {count} env vars from {}", env_path.display());
     }
+}
+
+/// Truncate a string to at most `max_bytes` without splitting a UTF-8 char.
+fn truncate_utf8(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes {
+        return s;
+    }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
