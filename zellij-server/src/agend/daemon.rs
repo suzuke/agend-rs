@@ -455,7 +455,7 @@ impl Daemon {
             }
         }
 
-        log::info!("agend daemon: {} → {}: {}", sender, target, &message[..message.len().min(100)]);
+        log::info!("agend daemon: {} → {}: {}", sender, target, truncate_utf8(message, 100));
 
         Ok(json!({
             "sent": true,
