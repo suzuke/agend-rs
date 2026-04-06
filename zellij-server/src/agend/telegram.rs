@@ -287,6 +287,12 @@ impl TelegramAdapter {
             .name("agend_tg_poll".into())
             .spawn(move || {
                 log::info!("agend telegram: polling thread started");
+
+                // Cancel any stale long-poll connection from a previous process
+                // by doing a short getUpdates with timeout=0
+                log::info!("agend telegram: cancelling stale connections...");
+                let _ = bot.call("getUpdates", &json!({"timeout": 0, "limit": 1}));
+
                 let mut offset: i64 = 0;
 
                 loop {
@@ -302,8 +308,13 @@ impl TelegramAdapter {
                             }
                         },
                         Err(e) => {
-                            log::warn!("agend telegram: getUpdates error: {e}");
-                            std::thread::sleep(Duration::from_secs(5));
+                            if e.contains("Conflict") || e.contains("terminated by other") {
+                                log::warn!("agend telegram: polling conflict (another process?), retrying in 10s...");
+                                std::thread::sleep(Duration::from_secs(10));
+                            } else {
+                                log::warn!("agend telegram: getUpdates error: {e}");
+                                std::thread::sleep(Duration::from_secs(5));
+                            }
                         },
                     }
                 }

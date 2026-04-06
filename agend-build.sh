@@ -29,12 +29,22 @@ case "$ACTION" in
     cargo check --no-default-features --features "vendored_curl,agend"
     echo "✅ Check passed"
     ;;
+  stop)
+    echo "🛑 Stopping agend..."
+    # Kill the zellij session named "agend" (kills server + all panes)
+    ./target/debug/zellij kill-session agend 2>/dev/null || \
+    ./target/release/zellij kill-session agend 2>/dev/null || \
+    echo "No agend session found"
+    # Also kill any orphaned zellij server processes running agend
+    pkill -f "zellij.*agend" 2>/dev/null || true
+    echo "✅ Stopped"
+    ;;
   clean)
     cargo clean
     echo "🧹 Cleaned"
     ;;
   *)
-    echo "Usage: $0 {build|release|test|run|check|clean}"
+    echo "Usage: $0 {build|release|test|run|stop|check|clean}"
     exit 1
     ;;
 esac
