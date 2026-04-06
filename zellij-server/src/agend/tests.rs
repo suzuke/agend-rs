@@ -4,7 +4,7 @@
 mod tests {
     use crate::agend::config::FleetConfig;
     use crate::agend::fleet::FleetManager;
-    use crate::agend::monitor::{Monitor, PtyEvent};
+    use crate::agend::monitor::{self, Monitor, MonitorAction, PtyEvent};
 
     #[test]
     fn parse_fleet_yaml() {
@@ -171,5 +171,70 @@ instances:
         let actions = monitor.process(PtyEvent::Bytes(1, ansi_prompt.to_vec()));
         assert!(actions.is_empty());
         assert!(monitor.terminals.get(&1).unwrap().ready);
+    }
+
+    #[test]
+    fn monitor_detects_rate_limit_error() {
+        let mut monitor = Monitor::new();
+        monitor.register(1, "test-inst".into(), "claude-code".into());
+
+        // First make it ready
+        let prompt = "❯ ".as_bytes();
+        monitor.process(PtyEvent::Bytes(1, prompt.to_vec()));
+        assert!(monitor.terminals.get(&1).unwrap().ready);
+
+        // Now send rate limit error
+        let error_output = "Error: Rate limit exceeded, please try again later".as_bytes();
+        let actions = monitor.process(PtyEvent::Bytes(1, error_output.to_vec()));
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            MonitorAction::Error(name, kind, action) => {
+                assert_eq!(name, "test-inst");
+                assert_eq!(*kind, monitor::ErrorKind::RateLimit);
+                assert_eq!(*action, monitor::ErrorAction::Notify);
+            },
+            _ => panic!("Expected Error action"),
+        }
+    }
+
+    #[test]
+    fn monitor_detects_crash_error() {
+        let mut monitor = Monitor::new();
+        monitor.register(1, "crash-inst".into(), "gemini-cli".into());
+
+        // Make it ready
+        let prompt = "Type your message".as_bytes();
+        monitor.process(PtyEvent::Bytes(1, prompt.to_vec()));
+        assert!(monitor.terminals.get(&1).unwrap().ready);
+
+        // Send crash
+        let crash = "Segmentation fault (core dumped)".as_bytes();
+        let actions = monitor.process(PtyEvent::Bytes(1, crash.to_vec()));
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            MonitorAction::Error(name, kind, action) => {
+                assert_eq!(name, "crash-inst");
+                assert_eq!(*kind, monitor::ErrorKind::Crash);
+                assert_eq!(*action, monitor::ErrorAction::Restart);
+            },
+            _ => panic!("Expected Error action"),
+        }
+    }
+
+    #[test]
+    fn monitor_detects_error_before_ready() {
+        let mut monitor = Monitor::new();
+        monitor.register(1, "pre-ready".into(), "claude-code".into());
+
+        // Error before ready state
+        let error = "Error: 429 Too many requests".as_bytes();
+        let actions = monitor.process(PtyEvent::Bytes(1, error.to_vec()));
+        assert_eq!(actions.len(), 1);
+        match &actions[0] {
+            MonitorAction::Error(_, kind, _) => {
+                assert_eq!(*kind, monitor::ErrorKind::RateLimit);
+            },
+            _ => panic!("Expected Error action"),
+        }
     }
 }

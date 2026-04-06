@@ -5113,6 +5113,9 @@ pub(crate) fn screen_thread_main(
                                     // TODO: find tab by name and close it
                                 },
                                 DaemonAction::Write(_, _) => {}, // handled above
+                                DaemonAction::RestartInstance(name) => {
+                                    log::warn!("agend: restart '{name}' requested");
+                                },
                             }
                         },
                     );

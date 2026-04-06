@@ -53,10 +53,43 @@ pub enum DaemonAction {
     },
     /// Close a tab by name.
     CloseTab(String),
+    /// Request instance restart (e.g., command not found, crash detected).
+    RestartInstance(String),
 }
 
 static DAEMON_CHANNEL: Lazy<(Sender<DaemonAction>, Receiver<DaemonAction>)> =
     Lazy::new(|| channel::bounded(256));
+
+/// Events from non-IPC sources that the daemon needs to handle.
+/// Consumed by the daemon's select loop (not the screen thread).
+#[derive(Debug)]
+pub enum DaemonEvent {
+    /// Health/lifecycle event → Telegram notify + event log.
+    Health {
+        instance: String,
+        event_type: String,
+        message: String,
+    },
+    /// PTY error detected → Telegram notify + event log.
+    PtyError {
+        instance: String,
+        kind: monitor::ErrorKind,
+        action: monitor::ErrorAction,
+    },
+}
+
+static DAEMON_INBOX: Lazy<(Sender<DaemonEvent>, Receiver<DaemonEvent>)> =
+    Lazy::new(|| channel::bounded(256));
+
+/// Send an event to the daemon inbox.
+pub fn send_daemon_event(event: DaemonEvent) {
+    let _ = DAEMON_INBOX.0.try_send(event);
+}
+
+/// Get a reference to the daemon inbox receiver (for the daemon's select loop).
+pub fn daemon_inbox_rx() -> &'static Receiver<DaemonEvent> {
+    &DAEMON_INBOX.1
+}
 
 /// Send a daemon action to the screen thread for pty_writer delivery.
 pub fn send_daemon_action(action: DaemonAction) {
@@ -233,10 +266,51 @@ where
     W: FnMut(u32, Vec<u8>),
     T: FnMut(DaemonAction),
 {
-    // Drain monitor actions (dialog dismissal, etc.)
+    // Drain monitor actions (dialog dismissal, error detection, etc.)
     while let Some(action) = monitor::recv_action() {
         match action {
             MonitorAction::Write(tid, bytes) => write_fn(tid, bytes),
+            MonitorAction::Error(instance, kind, ea) => {
+                log::warn!("agend: error {:?} for '{}' → {:?}", kind, instance, ea);
+                send_daemon_event(DaemonEvent::PtyError {
+                    instance,
+                    kind,
+                    action: ea,
+                });
+            },
+            MonitorAction::Restart(instance) => {
+                log::warn!("agend: restart requested for '{}'", instance);
+                send_daemon_action(DaemonAction::RestartInstance(instance));
+            },
+        }
+    }
+    // Drain health events → DAEMON_INBOX (Telegram notify + event log)
+    while let Some(event) = health::recv_health_event() {
+        match event {
+            health::HealthEvent::RestartNeeded(reason, instance) => {
+                log::info!("agend: health restart for '{}': {}", instance, reason);
+                send_daemon_event(DaemonEvent::Health {
+                    instance,
+                    event_type: "context_rotation".into(),
+                    message: format!("Context rotation triggered: {reason}"),
+                });
+            },
+            health::HealthEvent::CrashLoop(instance) => {
+                log::error!("agend: crash loop for '{}'", instance);
+                send_daemon_event(DaemonEvent::Health {
+                    instance,
+                    event_type: "crash_loop".into(),
+                    message: "Instance entered crash loop, pausing restarts".into(),
+                });
+            },
+            health::HealthEvent::HangDetected(instance, idle_secs) => {
+                log::warn!("agend: hang detected for '{}' ({}s idle)", instance, idle_secs);
+                send_daemon_event(DaemonEvent::Health {
+                    instance,
+                    event_type: "hang_detected".into(),
+                    message: format!("No PTY activity for {idle_secs}s"),
+                });
+            },
         }
     }
     // Drain daemon actions (message injection + tab operations)

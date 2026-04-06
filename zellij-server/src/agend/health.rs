@@ -17,6 +17,8 @@ pub enum HealthEvent {
     RestartNeeded(String, String),
     /// Instance entered crash loop.
     CrashLoop(String),
+    /// Instance appears hung (instance_name, idle_seconds).
+    HangDetected(String, u64),
 }
 
 static HEALTH_CHANNEL: Lazy<(Sender<HealthEvent>, Receiver<HealthEvent>)> =
@@ -27,13 +29,26 @@ pub fn recv_health_event() -> Option<HealthEvent> {
     HEALTH_CHANNEL.1.try_recv().ok()
 }
 
+/// Default hang threshold: 15 minutes without PTY activity.
+const HANG_THRESHOLD_SECS: u64 = 15 * 60;
+
+/// Minimum wait between rotation warning and actual kill+restart.
+const ROTATION_WAIT_SECS: u64 = 30;
+
 /// Per-instance health state.
 struct InstanceHealth {
     lifecycle: InstanceLifecycle,
-    last_pty_activity: Instant,
+    backend: String,
     spawn_time: Option<Instant>,
     max_age: Option<Duration>,
     grace_until: Option<Instant>,
+    /// Whether a hang notification has been sent (reset on next PTY activity).
+    hang_notified: bool,
+    /// Last known activity timestamp when hang was notified.
+    hang_notified_at: u64,
+    /// When a rotation warning was injected (two-phase rotation).
+    /// Phase 1: inject warning → set this. Phase 2: elapsed >= 30s → kill + restart.
+    rotation_scheduled_at: Option<Instant>,
 }
 
 /// Health checker — runs in its own thread.
@@ -52,7 +67,7 @@ impl HealthChecker {
                 .or_else(|| config.defaults.max_age_hours())
                 .filter(|&h| h > 0)
                 .map(|h| Duration::from_secs(h as u64 * 3600));
-            let grace_ms = ic
+            let _grace_ms = ic
                 .grace_period_ms()
                 .or_else(|| config.defaults.grace_period_ms())
                 .unwrap_or(600_000);
@@ -61,10 +76,13 @@ impl HealthChecker {
                 name.clone(),
                 InstanceHealth {
                     lifecycle: InstanceLifecycle::new(name.clone(), policy),
-                    last_pty_activity: Instant::now(),
+                    backend: ic.backend_or(&config.defaults).to_owned(),
                     spawn_time: None,
                     max_age,
                     grace_until: None,
+                    hang_notified: false,
+                    hang_notified_at: 0,
+                    rotation_scheduled_at: None,
                 },
             );
         }
@@ -94,7 +112,6 @@ impl HealthChecker {
     pub fn mark_ready(&mut self, name: &str) {
         if let Some(h) = self.instances.get_mut(name) {
             h.lifecycle.mark_ready();
-            h.last_pty_activity = Instant::now();
         }
     }
 
@@ -127,38 +144,79 @@ impl HealthChecker {
                     health.grace_until = None;
                 }
 
-                // Check max_age rotation
+                // Two-phase context rotation:
+                // Phase 2: rotation was scheduled → wait elapsed → kill + restart
+                if let Some(scheduled) = health.rotation_scheduled_at {
+                    if scheduled.elapsed().as_secs() >= ROTATION_WAIT_SECS {
+                        log::info!(
+                            "agend health: instance '{}' rotation wait complete, restarting",
+                            name
+                        );
+                        restart_instance(name);
+                        let _ = HEALTH_CHANNEL.0.try_send(HealthEvent::RestartNeeded(
+                            "context_rotation".into(),
+                            name.clone(),
+                        ));
+                        health.grace_until = Some(Instant::now() + Duration::from_secs(600));
+                        health.spawn_time = Some(Instant::now());
+                        health.rotation_scheduled_at = None;
+                    }
+                    continue; // skip other checks while rotation is pending
+                }
+
+                // Phase 1: max_age exceeded → inject warning → schedule rotation
                 if let (Some(max_age), Some(spawn_time)) = (health.max_age, health.spawn_time) {
                     if spawn_time.elapsed() >= max_age {
                         log::info!(
-                            "agend health: instance '{}' reached max_age ({:?}), requesting rotation",
+                            "agend health: instance '{}' reached max_age ({:?}), injecting rotation warning",
                             name, max_age
                         );
-                        // Trigger restart: close old tab + create new one
-                        restart_instance(name);
-                        let _ = HEALTH_CHANNEL.0.try_send(HealthEvent::RestartNeeded(
-                            "max_age".into(),
-                            name.clone(),
-                        ));
-                        // Enter grace period to prevent immediate re-trigger
-                        health.grace_until = Some(Instant::now() + Duration::from_secs(600));
-                        health.spawn_time = Some(Instant::now()); // reset for next cycle
+                        // Inject warning so agent can save context via post_decision
+                        let warning = format!(
+                            "\n[system:context-rotation] Your session will rotate in {} seconds. \
+                             Use post_decision to save any important context you want to preserve.\n",
+                            ROTATION_WAIT_SECS
+                        );
+                        if let Some(tid) = super::terminal_for_instance(name) {
+                            super::send_daemon_action(super::DaemonAction::Write(
+                                tid,
+                                warning.into_bytes(),
+                            ));
+                        }
+                        health.rotation_scheduled_at = Some(Instant::now());
                     }
                 }
 
-                // Check for prolonged inactivity (optional, 5 min threshold)
-                // This is a soft check — PTY bytes should flow if CLI is alive
+                // Hang detection: no PTY activity for 15 minutes
+                // Skip: pre-ready instances, opencode (subprocess mode idles normally)
                 if health.lifecycle.state == InstanceState::Ready
-                    && health.last_pty_activity.elapsed() > Duration::from_secs(300)
+                    && health.backend != "opencode"
                 {
-                    log::debug!(
-                        "agend health: instance '{}' no PTY activity for {:?}",
-                        name,
-                        health.last_pty_activity.elapsed()
-                    );
-                    // Don't trigger restart — CLI might just be idle
-                    // Update activity time to prevent log spam
-                    health.last_pty_activity = Instant::now();
+                    let last = super::monitor::last_activity_secs(name);
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    let idle_secs = now.saturating_sub(last);
+
+                    if idle_secs >= HANG_THRESHOLD_SECS {
+                        // Only notify once per hang episode (reset when activity resumes)
+                        if !health.hang_notified || health.hang_notified_at != last {
+                            log::warn!(
+                                "agend health: instance '{}' appears hung (no PTY activity for {}s)",
+                                name, idle_secs
+                            );
+                            let _ = HEALTH_CHANNEL.0.try_send(HealthEvent::HangDetected(
+                                name.clone(),
+                                idle_secs,
+                            ));
+                            health.hang_notified = true;
+                            health.hang_notified_at = last;
+                        }
+                    } else if health.hang_notified {
+                        // Activity resumed — reset hang state
+                        health.hang_notified = false;
+                    }
                 }
             }
         }

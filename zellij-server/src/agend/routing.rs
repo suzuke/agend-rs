@@ -77,6 +77,14 @@ impl RoutingEngine {
         );
     }
 
+    /// Get the thread/topic ID for an instance (reverse lookup).
+    pub fn thread_for_instance(&self, instance_name: &str) -> Option<&str> {
+        self.table
+            .iter()
+            .find(|(_, t)| t.name == instance_name && t.kind == RouteKind::Instance)
+            .map(|(k, _)| k.as_str())
+    }
+
     /// Get the general/dispatcher instance (if any).
     pub fn general_instance(&self) -> Option<&str> {
         self.table
