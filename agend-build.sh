@@ -22,6 +22,8 @@ case "$ACTION" in
     ;;
   run)
     echo "🚀 Starting agend..."
+    # Clean up dead session if exists (Zellij refuses to create a new one with same name)
+    ./target/debug/zellij delete-session agend 2>/dev/null || true
     ./target/debug/zellij agend
     ;;
   check)
@@ -37,6 +39,9 @@ case "$ACTION" in
     echo "No agend session found"
     # Also kill any orphaned zellij server processes running agend
     pkill -f "zellij.*agend" 2>/dev/null || true
+    # Delete dead session so next run doesn't conflict
+    ./target/debug/zellij delete-session agend 2>/dev/null || \
+    ./target/release/zellij delete-session agend 2>/dev/null || true
     echo "✅ Stopped"
     ;;
   clean)
