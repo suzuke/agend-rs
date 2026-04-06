@@ -227,7 +227,7 @@ pub fn on_new_pane(pid: PaneId, pane_name: Option<&str>) {
     if let PaneId::Terminal(tid) = pid {
         if let Some(name) = pane_name {
             if !name.is_empty() {
-                monitor::send_pty_event(PtyEvent::Register(tid, name.to_owned()));
+                register_terminal(name, tid);
             }
         }
     }

@@ -133,7 +133,7 @@ instances:
     }
 
     #[test]
-    fn monitor_register_ignores_unknown_instance() {
+    fn monitor_registers_dynamic_instance() {
         let yaml = r#"
 defaults:
   backend: claude-code
@@ -144,10 +144,11 @@ instances:
         let config: FleetConfig = serde_yaml::from_str(yaml).unwrap();
         let mut monitor = Monitor::with_config(&config);
 
-        // Unknown pane name → not registered
-        let actions = monitor.process(PtyEvent::Register(99, "random-pane".into()));
+        // Dynamic instance (not in fleet.yaml) → still registered with default backend
+        let actions = monitor.process(PtyEvent::Register(99, "dynamic-inst".into()));
         assert!(actions.is_empty());
-        assert!(!monitor.terminals.contains_key(&99));
+        assert!(monitor.terminals.contains_key(&99));
+        assert_eq!(monitor.terminals.get(&99).unwrap().backend, "claude-code");
     }
 
     #[test]

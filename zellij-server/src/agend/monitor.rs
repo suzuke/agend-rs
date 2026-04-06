@@ -306,9 +306,9 @@ impl Monitor {
         let mut actions = Vec::new();
         match event {
             PtyEvent::Register(tid, pane_name) => {
-                if let Some(backend) = self.instance_backends.get(&pane_name).cloned() {
-                    self.register(tid, pane_name, backend);
-                }
+                let backend = self.instance_backends.get(&pane_name).cloned()
+                    .unwrap_or_else(|| "claude-code".to_owned()); // default for dynamic instances
+                self.register(tid, pane_name, backend);
                 return actions;
             },
             PtyEvent::Bytes(tid, bytes) => {
