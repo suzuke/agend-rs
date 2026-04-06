@@ -299,6 +299,7 @@ pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> 
     }
 
     let mut args = Vec::new();
+    args.push("--no-alt-screen".into()); // Required for Zellij multiplexer
     if cfg.skip_permissions {
         args.push("--dangerously-bypass-approvals-and-sandbox".into());
     } else {
@@ -308,8 +309,15 @@ pub fn write_codex_config(cfg: &BackendConfig) -> std::io::Result<SpawnCommand> 
         args.push(format!("--model \"{m}\""));
     }
 
+    let codex_bin = resolve_binary("codex");
+    // Run MCP setup before starting Codex (registers agend MCP server)
+    let command = format!(
+        "bash -c 'source {} 2>/dev/null; {} {}'",
+        setup_path.display(), codex_bin, args.join(" ")
+    );
+
     Ok(SpawnCommand {
-        command: format!("{} {}", resolve_binary("codex"), args.join(" ")),
+        command,
         env: vec![instance_env(cfg.instance_name)],
     })
 }

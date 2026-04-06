@@ -1328,49 +1328,99 @@ fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
         let oc_binary_path = instance_dir.join("opencode-binary");
 
         let inject_text = if oc_binary_path.exists() {
-            // OpenCode instance: spawn `opencode run --continue` as a subprocess
-            // directly from the daemon, bypassing terminal injection entirely.
-            // This is more reliable than injecting commands into the pane shell.
+            // OpenCode instance: spawn `opencode run` as a subprocess.
+            // TUI mode doesn't reliably accept injected input in Zellij daemon mode.
             let oc_binary = std::fs::read_to_string(&oc_binary_path)
                 .unwrap_or_else(|_| "opencode".into())
                 .trim()
                 .to_owned();
-            // Resolve working directory from instance config
-            let work_dir = instance_dir.join("..").join(".."); // fallback
-            // Read working directory from instance.json if available
             let work_dir = std::fs::read_to_string(instance_dir.join("instance.json"))
                 .ok()
                 .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
                 .and_then(|v| v["working_directory"].as_str().map(|s| std::path::PathBuf::from(s)))
-                .unwrap_or(work_dir);
+                .unwrap_or_else(|| instance_dir.join("..").join(".."));
 
-            let msg = formatted_text.to_owned();
-            let name = instance_name.to_owned();
+            // Parallel protection: skip if another opencode run is in progress
+            let running_flag = instance_dir.join("opencode-running");
+            if running_flag.exists() {
+                log::warn!("agend: opencode run already in progress for '{}', queuing", instance_name);
+                // Retry after current run finishes
+                let name = instance_name.to_owned();
+                let text = formatted_text.to_owned();
+                let flag = running_flag.clone();
+                std::thread::Builder::new()
+                    .name(format!("oc_queue_{name}"))
+                    .spawn(move || {
+                        for _ in 0..30 {
+                            std::thread::sleep(std::time::Duration::from_secs(2));
+                            if !flag.exists() {
+                                inject_message_to_instance(&name, &text);
+                                return;
+                            }
+                        }
+                        log::warn!("agend: gave up queuing opencode message for '{name}'");
+                    })
+                    .ok();
+                return;
+            }
+
+            // Read session ID for continuity
+            let session_file = instance_dir.join("session-id");
+            let mut args: Vec<String> = vec!["run".into()];
+            match std::fs::read_to_string(&session_file) {
+                Ok(sid) if !sid.trim().is_empty() => {
+                    args.push("--session".into());
+                    args.push(sid.trim().to_owned());
+                },
+                _ => args.push("--continue".into()),
+            }
+            args.push(formatted_text.to_owned());
+
+            let msg_name = instance_name.to_owned();
+            let inst_dir = instance_dir.clone();
             std::thread::Builder::new()
-                .name(format!("oc_run_{name}"))
+                .name(format!("oc_run_{msg_name}"))
                 .spawn(move || {
-                    log::info!("agend: spawning opencode run for '{name}'");
-                    match std::process::Command::new(&oc_binary)
-                        .args(["run", "--continue", &msg])
+                    // Set running flag
+                    let running = inst_dir.join("opencode-running");
+                    let _ = std::fs::write(&running, "");
+
+                    log::info!("agend: spawning opencode run for '{msg_name}'");
+                    let result = std::process::Command::new(&oc_binary)
+                        .args(&args)
                         .current_dir(&work_dir)
                         .env("PATH", format!("{}:{}",
                             std::path::Path::new(&oc_binary).parent().unwrap_or(std::path::Path::new("")).display(),
                             std::env::var("PATH").unwrap_or_default()))
-                        .output()
-                    {
+                        .output();
+
+                    // Clear running flag
+                    let _ = std::fs::remove_file(&running);
+
+                    match result {
                         Ok(output) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout);
                             if !output.status.success() {
                                 let stderr = String::from_utf8_lossy(&output.stderr);
-                                log::error!("agend: opencode run failed for '{name}': {stderr}");
+                                log::error!("agend: opencode run failed for '{msg_name}': {stderr}");
                             } else {
-                                log::info!("agend: opencode run completed for '{name}'");
+                                log::info!("agend: opencode run completed for '{msg_name}'");
+                            }
+                            // Extract session ID from JSON output for continuity
+                            for line in stdout.lines() {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                                    if let Some(sid) = v["sessionID"].as_str() {
+                                        let _ = std::fs::write(inst_dir.join("session-id"), sid);
+                                        break;
+                                    }
+                                }
                             }
                         },
-                        Err(e) => log::error!("agend: failed to spawn opencode for '{name}': {e}"),
+                        Err(e) => log::error!("agend: failed to spawn opencode for '{msg_name}': {e}"),
                     }
                 })
                 .ok();
-            return; // Don't inject into terminal
+            return;
         } else {
             // Other backends (Claude Code, etc.): inject raw text
             formatted_text.to_owned()
