@@ -109,12 +109,12 @@ struct BackendPatterns {
 fn error_patterns() -> Vec<ErrorPattern> {
     vec![
         ErrorPattern {
-            pattern: Regex::new(r"[Rr]ate.?[Ll]imit|[Tt]oo [Mm]any [Rr]equests|429|[Qq]uota [Ee]xceeded").unwrap(),
+            pattern: Regex::new(r"[Rr]ate.?[Ll]imit|[Tt]oo [Mm]any [Rr]equests|HTTP\s+429|[Qq]uota [Ee]xceeded").unwrap(),
             kind: ErrorKind::RateLimit,
             action: ErrorAction::Notify,
         },
         ErrorPattern {
-            pattern: Regex::new(r"[Aa]uth.*(?:[Ee]rror|[Ff]ail)|[Uu]nauthorized|401|403|[Ii]nvalid.*[Tt]oken").unwrap(),
+            pattern: Regex::new(r"[Aa]uth(?:entication|orization)\s+(?:[Ee]rror|[Ff]ail)|HTTP\s+401|HTTP\s+403|[Ii]nvalid\s+(?:API\s+)?[Tt]oken").unwrap(),
             kind: ErrorKind::AuthError,
             action: ErrorAction::Pause,
         },
@@ -124,7 +124,7 @@ fn error_patterns() -> Vec<ErrorPattern> {
             action: ErrorAction::Notify,
         },
         ErrorPattern {
-            pattern: Regex::new(r"[Oo]verloaded|503|[Ss]ervice [Uu]navailable").unwrap(),
+            pattern: Regex::new(r"[Oo]verloaded|HTTP\s+503|[Ss]ervice [Uu]navailable").unwrap(),
             kind: ErrorKind::Overloaded,
             action: ErrorAction::Notify,
         },

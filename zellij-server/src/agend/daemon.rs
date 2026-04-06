@@ -472,25 +472,29 @@ impl Daemon {
                     .or_else(|| self.routing.read().ok()
                         .and_then(|r| r.thread_for_instance(sender).map(|s| s.to_owned())));
 
-                // Post to receiver's topic
-                if let Some(tid) = receiver_topic {
-                    let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
-                        chat_id: gid.to_string(),
-                        text: visibility_text.clone(),
-                        thread_id: Some(tid),
-                        reply_to: None,
-                        format: None,
-                    });
+                // Post to receiver's topic (skip General topic "1" which often errors)
+                if let Some(ref tid) = receiver_topic {
+                    if tid != "1" {
+                        let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
+                            chat_id: gid.to_string(),
+                            text: visibility_text.clone(),
+                            thread_id: Some(tid.clone()),
+                            reply_to: None,
+                            format: None,
+                        });
+                    }
                 }
-                // Post to sender's topic (if different)
-                if let Some(tid) = sender_topic {
-                    let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
-                        chat_id: gid.to_string(),
-                        text: format!("→ {}: {}", target, summary),
-                        thread_id: Some(tid),
-                        reply_to: None,
-                        format: None,
-                    });
+                // Post to sender's topic (if different and not General)
+                if let Some(ref tid) = sender_topic {
+                    if tid != "1" && sender_topic != receiver_topic {
+                        let _ = telegram.outbound_tx.try_send(OutboundAction::SendText {
+                            chat_id: gid.to_string(),
+                            text: format!("→ {}: {}", target, summary),
+                            thread_id: Some(tid.clone()),
+                            reply_to: None,
+                            format: None,
+                        });
+                    }
                 }
             }
         }
