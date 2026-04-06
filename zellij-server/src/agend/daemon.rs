@@ -41,6 +41,8 @@ pub struct Daemon {
 impl Daemon {
     /// Create and start the daemon from fleet config.
     pub fn start(config: FleetConfig) -> Self {
+        load_env_file();
+
         let db_path = super::paths::db_path();
         std::fs::create_dir_all(db_path.parent().unwrap()).ok();
 
@@ -1198,6 +1200,33 @@ impl Daemon {
 /// wraps the message as an `opencode run --continue` command instead
 /// of injecting raw text, since OpenCode's TUI doesn't accept raw input
 /// in daemon mode.
+/// Load ~/.agend/.env into process environment (key=value, # comments, blank lines skipped).
+fn load_env_file() {
+    let env_path = super::paths::agend_home().join(".env");
+    let content = match std::fs::read_to_string(&env_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let mut count = 0;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some((key, value)) = trimmed.split_once('=') {
+            let key = key.trim();
+            let value = value.trim().trim_matches('"').trim_matches('\'');
+            if !key.is_empty() && std::env::var(key).is_err() {
+                std::env::set_var(key, value);
+                count += 1;
+            }
+        }
+    }
+    if count > 0 {
+        log::info!("agend daemon: loaded {count} env vars from {}", env_path.display());
+    }
+}
+
 fn inject_message_to_instance(instance_name: &str, formatted_text: &str) {
     if let Some(tid) = super::terminal_for_instance(instance_name) {
         let instance_dir = super::paths::instance_dir(instance_name);
