@@ -47,10 +47,11 @@ git clone https://github.com/suzuke/agend-rs.git
 cd agend-rs
 git checkout agend/main
 
-# Build with agend feature
-cargo build --release --features agend
-
-# Binary at target/release/zellij
+# Build (uses agend-build.sh)
+./agend-build.sh release    # release build → target/release/zellij
+./agend-build.sh build      # debug build → target/debug/zellij
+./agend-build.sh test       # run agend tests
+./agend-build.sh run        # build + start fleet
 ```
 
 ### Requirements
@@ -134,7 +135,10 @@ instances:
 # Set bot token
 export TELEGRAM_BOT_TOKEN=your_token_here
 
-# Start (opens Zellij with one tab per instance)
+# Start via build script (debug build + run)
+./agend-build.sh run
+
+# Or directly with release binary
 ./target/release/zellij agend
 ```
 
