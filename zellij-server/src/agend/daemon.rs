@@ -646,12 +646,12 @@ impl Daemon {
                         )
                     };
 
-                    super::send_daemon_action(super::DaemonAction::NewTab {
-                        name: directory.to_owned(),
-                        command: cmd_binary,
-                        args: cmd_args,
-                        cwd: ic.working_directory.clone(),
-                    });
+                    super::send_new_tab(
+                        directory.to_owned(),
+                        cmd_binary,
+                        cmd_args,
+                        ic.working_directory.clone(),
+                    );
 
                     let _ = self.db.insert_event(directory, "instance_started", None, None, Some("Instance started"), None);
                     log::info!("agend daemon: starting instance '{directory}'");
@@ -700,12 +700,14 @@ impl Daemon {
                 Ok(spawn) => {
                     let parts: Vec<&str> = spawn.command.split_whitespace().collect();
                     if !parts.is_empty() {
-                        super::send_daemon_action(super::DaemonAction::NewTab {
-                            name: name.to_owned(),
-                            command: parts[0].to_owned(),
-                            args: parts[1..].iter().map(|s| s.to_string()).collect(),
-                            cwd: work_dir,
-                        });
+                        // Send NewTab directly to screen thread (bypasses drain_actions
+                        // which doesn't run reliably in daemon mode)
+                        super::send_new_tab(
+                            name.to_owned(),
+                            parts[0].to_owned(),
+                            parts[1..].iter().map(|s| s.to_string()).collect(),
+                            work_dir,
+                        );
                     }
                 },
                 Err(e) => return Err(format!("failed to write config: {e}")),

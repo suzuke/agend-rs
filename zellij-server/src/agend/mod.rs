@@ -38,6 +38,59 @@ pub fn debug_log(msg: &str) {
     }
 }
 
+// ── Direct screen sender (for NewTab bypassing drain_actions) ──
+
+use crate::screen::ScreenInstruction;
+use crate::thread_bus::ThreadSenders;
+
+static SCREEN_SENDER: Lazy<RwLock<Option<crate::SenderWithContext<ScreenInstruction>>>> =
+    Lazy::new(|| RwLock::new(None));
+
+/// Store a clone of the screen sender for direct NewTab delivery.
+/// Called once during init_session.
+pub fn set_screen_sender(senders: &ThreadSenders) {
+    if let Some(ref sender) = senders.to_screen {
+        if let Ok(mut s) = SCREEN_SENDER.write() {
+            *s = Some(sender.clone());
+        }
+    }
+}
+
+/// Send a NewTab instruction directly to the screen thread.
+/// Bypasses drain_actions which only runs on PtyBytes/RenderToClients events.
+pub fn send_new_tab(name: String, command: String, args: Vec<String>, cwd: PathBuf) {
+    // Try direct screen sender first (works reliably in daemon mode)
+    if let Ok(guard) = SCREEN_SENDER.read() {
+        if let Some(ref sender) = *guard {
+            use zellij_utils::input::command::RunCommand;
+            let run_cmd = RunCommand {
+                command: PathBuf::from(&command),
+                args,
+                cwd: Some(cwd),
+                ..Default::default()
+            };
+            let _ = sender.send(ScreenInstruction::NewTab(
+                None,
+                Some(zellij_utils::input::command::TerminalAction::RunCommand(run_cmd)),
+                None,
+                vec![],
+                Some(name.clone()),
+                (vec![], vec![]),
+                None,
+                false,
+                true,
+                (1, false),
+                None,
+            ));
+            log::info!("agend: sent NewTab '{}' directly to screen", name);
+            return;
+        }
+    }
+    // Fallback: DaemonAction (may be delayed in daemon mode)
+    log::warn!("agend: no screen sender, falling back to DaemonAction for '{}'", name);
+    send_daemon_action(DaemonAction::NewTab { name, command, args, cwd });
+}
+
 // ── Daemon output channel (daemon thread → screen thread → pty_writer) ──
 
 /// Actions the daemon wants to perform on panes/tabs.

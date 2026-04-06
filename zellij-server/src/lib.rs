@@ -1978,6 +1978,13 @@ fn init_session(
     // AgEnD hook: start the monitor thread if in agend mode
     #[cfg(feature = "agend")]
     if std::env::var("AGEND_MODE").is_ok() {
+        // Store screen sender for direct NewTab delivery (bypasses drain_actions)
+        agend::set_screen_sender(&ThreadSenders {
+            to_screen: Some(to_screen.clone()),
+            to_pty: None, to_plugin: None, to_pty_writer: None,
+            to_background_jobs: None, to_server: None,
+            should_silently_fail: false,
+        });
         agend::start_monitor();
     }
 

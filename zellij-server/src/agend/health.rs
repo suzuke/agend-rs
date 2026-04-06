@@ -265,12 +265,12 @@ fn restart_instance(instance_name: &str) {
                 Ok(spawn) => {
                     let parts: Vec<&str> = spawn.command.split_whitespace().collect();
                     if !parts.is_empty() {
-                        super::send_daemon_action(super::DaemonAction::NewTab {
-                            name: instance_name.to_owned(),
-                            command: parts[0].to_owned(),
-                            args: parts[1..].iter().map(|s| s.to_string()).collect(),
-                            cwd: ic.working_directory.clone(),
-                        });
+                        super::send_new_tab(
+                            instance_name.to_owned(),
+                            parts[0].to_owned(),
+                            parts[1..].iter().map(|s| s.to_string()).collect(),
+                            ic.working_directory.clone(),
+                        );
                     }
                 },
                 Err(e) => log::error!("agend health: failed to write config for restart: {e}"),
