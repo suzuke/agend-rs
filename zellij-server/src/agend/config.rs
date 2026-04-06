@@ -94,7 +94,7 @@ pub struct InstanceConfig {
     pub tags: Vec<String>,
     pub backend: Option<String>,
     pub model: Option<String>,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub skip_permissions: bool,
     pub topic_id: Option<i64>,
     #[serde(default)]
@@ -142,6 +142,9 @@ impl InstanceConfig {
     }
 }
 
+fn default_true() -> bool {
+    true
+}
 fn default_backend() -> String {
     "claude-code".into()
 }
